@@ -1,0 +1,6 @@
+WuF (Windows Update Forcer)
+
+The WuF is a command line utility that forces the windows update agent to perform actions that normally must be performed via the windows update website or the agent GUI. It is designed to execute remotley. It is intended for use in an environment where many windows computers must be updated in batches and where any useful scripting languages and executables are not possible to install.
+
+Usage:
+Simply drop the WuF folder on a computer you intend to use as a command center. Then run the wuf_controller.bat file from the command line. You must supply it with a group file, which is a newline delimited file of computer names that the WuF should perform an action on. 
