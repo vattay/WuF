@@ -59,20 +59,21 @@ if [%2]==[] (
 	echo You must specify an action ^(%actionString%^). 2>&1
 	goto inputerr
 ) else (
+	set action_tag=%2
 	if /I "%2"=="auto" (
-		set action=%2%
+		set action=/aA
 		echo Action is AUTO. >> %log_file% 2>&1
 	) else (
 		if /I "%2"=="scan" (
-			set action=%2%
+			set action=/aS
 			echo Action is SCAN. >> %log_file% 2>&1
 		) else (
 			if /I "%2"=="download" (
-				set action=%2%
+				set action=/aD
 				echo Action is DOWNLOAD. >> %log_file% 2>&1
 			) else (
 				if /I "%2"=="install" (
-					set action=%2%
+					set action=/aD /aI
 					echo Action is INSTALL. >> %log_file% 2>&1
 				) else (
 					echo Unknown action requested. >> %log_file% 2>&1
@@ -83,11 +84,13 @@ if [%2]==[] (
 	)
 )
 
-set restart=0
+set restart=
 set attached=-d
+set restart_tag=
 if NOT [%3]==[] (
 	if /I "%3"=="restart" (
-		set restart=1
+		set restart=/sR
+		set restart_tag=r
 		echo Restart was specified. >> %log_file% 2>&1
 	) else (
 		if /I "%3"=="attached" (
@@ -102,7 +105,8 @@ if NOT [%3]==[] (
 
 if NOT [%4]==[] (
 	if /I "%4"=="restart" (
-		set restart=1
+		set restart=/sR
+		set restart_tag=r
 		echo Restart was specified. >> %log_file% 2>&1
 	) else (
 		if /I "%4"=="attached" (
@@ -134,9 +138,9 @@ if not exist %dropBoxRootLocation% (
 
 set restartConfirm=""
 :restartConfirmTag
-if /I "%restart%"=="1" Set /P restartConfirm="Are you sure you want to restart all servers in group[y/n]">CON
+if /I "%restart%"=="/sR" Set /P restartConfirm="Are you sure you want to restart all servers in group[y/n]">CON
 
-if /I "%restart%"=="1" (
+if /I "%restart%"=="/sR" (
 	if /I "%restartConfirm%"=="y" (
 		echo Restart was confirmed. >> %log_file% 2>&1
 	) else (
@@ -150,7 +154,7 @@ if /I "%restart%"=="1" (
 )
 
 REM !!Pattern for dropbox name.
-set dropBoxLocation="%dropBoxRootLocation%\%timestamp%_%groupName%_%action%_r%restart%"
+set dropBoxLocation="%dropBoxRootLocation%\%timestamp%_%groupName%_%action_tag%_%restart_tag%"
 
 if not exist %dropBoxLocation% (
 	mkdir %dropBoxLocation%
@@ -181,7 +185,7 @@ for /F "eol=;" %%i in (%groupFile%) do (
   ( copy agent\%master_agent% \\%%i\C$\windows\temp\%remote_agent% >> %log_file% 2>&1 )  
   if not errorlevel 1 ( 
     ( echo Remote executing wuf agent on %%i >> %log_file% >> %log_file% 2>&1)
-	( psexec %ATTACHED% -s \\%%i cscript.exe //NoLogo c:\windows\temp\%remote_agent% action:%action% dropbox:%dropBoxLocation% resultDropName:%dropResultPrefix%_%%i.txt shutdownoption:%restart% 2>&1) 
+	( psexec %ATTACHED% -s \\%%i cscript.exe //NoLogo c:\windows\temp\%remote_agent% %action% /d:%dropBoxLocation% /n:%dropResultPrefix%_%%i.txt %restart% 2>&1) 
   )
 )
 

@@ -1,13 +1,16 @@
 Option Explicit
 '*******************************************************************************
+'Settings------------------------------
 Const LOG_LEVEL = 3
+Const WUF_CATCH_ALL_EXCEPTIONS = 0
+Const WUF_ASYNC = 1
+Const WUF_SHUTDOWN_DELAY = 60
+'--------------------------------------
   
 Const LOG_LEVEL_DEBUG = 3
 Const LOG_LEVEL_INFO = 2
 Const LOG_LEVEL_WARN = 1
 Const LOG_LEVEL_ERROR = 0
-
-Const WUF_CATCH_ALL_EXCEPTIONS = 0
 
 Const WUF_AGENT_VERSION = "1.8"
 Const WU_AGENT_VERSION = "7.0.6000.374"
@@ -22,27 +25,24 @@ Const WSUS_REG_KEY_PATH = "SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate"
 Const WSUS_REG_KEY_WUSERVER = "WUServer"
 Const WSUS_REG_KEY_TARGET_GROUP = "TargetGroup"
 
-Const WUF_ASYNC = 1
-
 Const WUF_INPUT_ERROR = 10001
 Const WUF_FEEDBACK_ERROR = 10002
 
-Const WUF_ACTION_UNDEFINED = -1
-Const WUF_ACTION_AUTO = 	0
-Const WUF_ACTION_SCAN = 	1
-Const WUF_ACTION_DOWNLOAD = 2
-Const WUF_ACTION_INSTALL = 	3
+Const WUF_ACTION_UNDEFINED = 0
+Const WUF_ACTION_AUTO = 	1
+Const WUF_ACTION_SCAN = 	2
+Const WUF_ACTION_DOWNLOAD = 4
+Const WUF_ACTION_INSTALL = 	8
 
 Const WUF_SHUTDOWN_UNDEFINED = -1
 Const WUF_SHUTDOWN_DONT = 	0
 Const WUF_SHUTDOWN_RESTART = 1
 Const WUF_SHUTDOWN_SHUTDOWN = 2
-Const WUF_SHUTDOWN_DELAY = 60
 
 Const WUF_DEFAULT_SEARCH_FILTER = "IsAssigned=1 and IsHidden=0 and IsInstalled=0 and Type='Software'"
 'Const WUF_DEFAULT_SEARCH_FILTER = "IsAssigned=1 and IsHidden=0 and IsInstalled=1 and Type='Software'"
 Const WUF_DEFAULT_FORCE_SHUTDOWN_ACTION = false
-Const WUF_DEFAULT_ACTION = 0 
+Const WUF_DEFAULT_ACTION = 1 
 Const WUF_DEFAULT_SHUTDOWN_OPTION = 0
 
 Const WUF_DEFAULT_LOG_LOCATION = "C:\Windows\Temp\wufa_local" 
@@ -52,7 +52,7 @@ Const WUF_DEFAULT_RESULT_DROPBOX = "c:\temp\wuf_dropbox"
 Const WUF_DEFAULT_LOG_DROP_NAME = "wufa_drop_localhost.log"
 Const WUF_DEFAULT_RESULT_DROP_NAME = "wufa_drop_result_localhost.txt"
 
-Const WUF_USAGE = "wuf_agent [ action:(AUTO|SCAN|DOWNLOAD|INSTALL) shutdownoption:(0|1|2) force:(1|0) dropbox:(<unc_path>) resultdropname:(name)"
+Const WUF_USAGE = "wuf_agent.vbs [/aA | /aS | /aD | /aI] [/sN | /sR | /sH] [/fS] [/d:<unc_path>] [/n:<result_name>]"
 
 'Globals - avoid modification after initialize()
 Dim stdErr, stdOut	'std stream access
@@ -74,7 +74,7 @@ Dim gObjDummyDict	'Used for async wu operations
 
 Class DummyClass 'set up dummy class for async download and installation calls
 	Public Default Function DummyFunction()
-		WScript.echo "Dummy Function Called"
+		LogDebug( "Dummy Function Called" )
 	End Function		
 End Class
 
@@ -132,7 +132,7 @@ Function initialize()
 	
 	gLogLocation = WUF_DEFAULT_LOG_LOCATION & "_" & gRunId & ".log"
 	gResultLocation = WUF_DEFAULT_RESULT_LOCATION  & "_" & gRunId & ".txt"
-	gAction = WUF_DEFAULT_ACTION
+	gAction = WUF_ACTION_UNDEFINED
 	gShutdownOption = WUF_DEFAULT_SHUTDOWN_OPTION
 	gForceShutdown = WUF_DEFAULT_FORCE_SHUTDOWN_ACTION
 	gDropBox = WUF_DEFAULT_RESULT_DROPBOX
@@ -158,8 +158,7 @@ Function configure()
 	
 	configureResultMap(gResultMap)
 	
-	logDebug("Creating Update Session.")
-	Set gObjUpdateSession = CreateObject("Microsoft.Update.Session")
+
 	
 	On Error Resume Next
 		parseArgs()
@@ -171,12 +170,16 @@ Function configure()
 			call logErrorEx("Improper input.", Ex)
 			logInfo("Usage: " & WUF_USAGE)
 			configure = false
+			Exit Function
 		Else
 			call logErrorEx("Unknown error during configuration.", Ex)
 			configure = false
 			Exit Function
 		End If
 	End If
+	
+	logDebug("Creating Update Session.")
+	Set gObjUpdateSession = CreateObject("Microsoft.Update.Session")
 	
 	logInfo( "DropBox: " & gDropBox)
 	logInfo( "Result Drop Filename: " & gResultDropName)
@@ -186,7 +189,6 @@ End Function
 '*******************************************************************************
 Function configureResultMap(objResultMap)
 
-	call writeGlobalResultMap( "init", "1" )
 	call writeGlobalResultMap( "init.time", Now() )
 	call writeGlobalResultMap( "init.ruid", gRunId )
 	
@@ -194,76 +196,81 @@ End Function
 
 '*******************************************************************************
 Function parseArgs()
-
-    Dim objArgs
+	Dim arg
+    Dim objArgs, objNamedArgs, objUnnamedArgs
 	Dim success
 	
 	success = false
 	
 	Set objArgs = WScript.Arguments
 	
+	Set objNamedArgs = WScript.Arguments.named
+	Set objUnnamedArgs = WScript.Arguments.unnamed
+		
+	
 	If (objArgs.Count > 0) Then
 		Dim i
-		For i = 0 to (objArgs.Count - 1)
+		For Each arg in objNamedArgs
 			Dim strArrTemp
-			If (objArgs.Count > 0) Then		  
-				If ( headStrI(objargs(i),"action:") ) Then
-					strArrTemp = split(objargs(i),":")
-					If Not(parseAction(strArrTemp(1))) Then
-						Err.Raise WUF_INPUT_ERROR, "Wuf.parseArgs()", "Invalid action: " & objargs(i)	
-					End If
-				ElseIf ( headStrI(objargs(i),"shutdownoption:") ) Then 
-					strArrTemp = split(objargs(i),":")
-					If Not( parseShutdownOption(strArrTemp(1)) ) Then
-						Err.Raise WUF_INPUT_ERROR, "Wuf.parseArgs()", "Invalid shutdown option."
-					End If
-				ElseIf ( headStrI(objargs(i),"force:") ) Then
-					strArrTemp = split(objargs(i),":")
-					If Not( parseForceShutdown(strArrTemp(1)) ) Then
-						Err.Raise WUF_INPUT_ERROR, "Wuf.parseArgs()", "Invalid force shutdown option."
-					End If
-				ElseIf ( headStrI(objargs(i),"dropbox:") ) Then
-					strArrTemp = split(objargs(i),"box:")
-					gDropBox = strArrTemp(1)
-				ElseIf ( headStrI(objargs(i),"resultDropName:") ) Then
-					strArrTemp = split(objargs(i),":")
-					gResultDropName = strArrTemp(1)				
-				Else
-					success = false
-					Err.Raise WUF_INPUT_ERROR, "Wuf.parseArgs()", "Unknown argument: " & objargs(i)	
+			logDebug("Testing arg " & arg)
+			If ( headStrI(arg,"a") ) Then
+				If Not ( parseAction(arg) ) Then
+					Err.Raise WUF_INPUT_ERROR, "Wuf.parseArgs()", "Invalid action " & objargs(i)
 				End If
+			ElseIf ( headStrI(arg,"s") ) Then 
+				If Not( parseShutdownOption(arg) ) Then
+					Err.Raise WUF_INPUT_ERROR, "Wuf.parseArgs()", "Invalid shutdown option."
+				End If
+			ElseIf ( headStrI(arg,"f") ) Then
+				If Not( parseForceShutdown(arg) ) Then
+					Err.Raise WUF_INPUT_ERROR, "Wuf.parseArgs()", "Invalid force option."
+				End If
+			ElseIf ( strCompI(arg,"d") ) Then
+				gDropBox = Wscript.Arguments.Named("d")
+			ElseIf ( strCompI(arg,"n") ) Then
+				gResultDropName = Wscript.Arguments.Named("n")			
+			Else
+				success = false
+				Err.Raise WUF_INPUT_ERROR, "Wuf.parseArgs()", "Unknown argument: " & objargs(i)	
 			End If
 		Next
+		For Each arg in objUnnamedArgs
+			success = false
+			Err.Raise WUF_INPUT_ERROR, "Wuf.parseArgs()", "Unknown argument: " & arg	
+		Next
 	Else
-		success = true
+		' No Args
+		success = false
+		Err.Raise WUF_INPUT_ERROR, "Wuf.parseArgs()", "No arguments."	
 	End If
 End Function
 
 '*******************************************************************************
 Function parseAction(strArgVal) 'return boolean
 	parseAction = True
-	If ( strCompI(strArgVal,"auto") ) Then
-		gAction = WUF_ACTION_AUTO
-	ElseIf ( strCompI(strArgVal,"scan") ) Then
-		gAction = WUF_ACTION_SCAN
-	ElseIf ( strCompI(strArgVal,"download") ) Then
-		gAction = WUF_ACTION_DOWNLOAD
-	ElseIf ( strCompI(strArgVal,"install") ) Then
-		gAction = WUF_ACTION_INSTALL
+	If ( strCompI(strArgVal,"aA") ) Then
+		gAction = gAction or WUF_ACTION_AUTO
+	ElseIf ( strCompI(strArgVal,"aS") ) Then
+		gAction = gAction or WUF_ACTION_SCAN
+	ElseIf ( strCompI(strArgVal,"aD") ) Then
+		gAction = gAction or WUF_ACTION_DOWNLOAD
+	ElseIf ( strCompI(strArgVal,"aI") ) Then
+		gAction = gAction or WUF_ACTION_INSTALL
 	Else
-		gAction = WUF_ACTION_UNDEFINED
+		gAction = gAction or WUF_ACTION_UNDEFINED
 		parseAction = False
 	End If
 End Function
 
+
 '*******************************************************************************
 Function parseShutdownOption(strArgVal) 'return boolean
 	parseShutdownOption = True
-	If (strCompI(strArgVal,"0")) Then
+	If (strCompI(strArgVal,"sN")) Then
 		gShutdownOption = WUF_SHUTDOWN_DONT
-	ElseIf (strCompI(strArgVal, "1")) Then
+	ElseIf (strCompI(strArgVal, "sR")) Then
 		gShutdownOption = WUF_SHUTDOWN_RESTART
-	ElseIf (strCompI(strArgVal, "2")) Then
+	ElseIf (strCompI(strArgVal, "sH")) Then
 		gShutdownOption = WUF_SHUTDOWN_SHUTDOWN
 	Else
 		gShutdownOption = WUF_SHUTDOWN_UNDEFINED
@@ -274,9 +281,7 @@ End Function
 '*******************************************************************************
 Function parseForceShutdown(strArgVal) 'return boolean
 	parseForceShutdown = True
-	If (strCompI(strArgVal,"0")) Then
-		gForceShutdown = False
-	ElseIf (strCompI(strArgVal,"1")) Then
+	If (strCompI(strArgVal,"fS")) Then
 		gForceShutdown = True
 	Else
 		parseForceShutdown = False
@@ -305,7 +310,7 @@ Function verify() 'return boolean
 	
 	If (isShutdownActionPending()) Then
 		logInfo("[?] There is a pending restart required.")
-		If (gAction = WUF_ACTION_INSTALL) Then
+		If ((gAction and WUF_ACTION_INSTALL) = 1) Then
 			logWarn("[-] Install requested with pending restart.")
 			verified = False
 		End If
@@ -339,7 +344,7 @@ Function doAction(intAction)
 	
 	Dim objUpdateResults
 	
-	If (intAction = WUF_ACTION_AUTO) Then
+	If ((intAction and WUF_ACTION_AUTO) <> 0) Then
 		autoDetect()
 	Else
 		Set objUpdateResults = manualAction(intAction)
@@ -366,7 +371,7 @@ Function manualAction(intAction)
 	
 	If (intUpdateCount > 0) Then
 		acceptEulas(searchResults)
-		If (intAction = WUF_ACTION_DOWNLOAD) Then
+		If ( (intAction and WUF_ACTION_DOWNLOAD) <> 0 ) Then
 			If (WUF_ASYNC = 1) Then
 				Set downloadResults = wuDownloadAsync(searchResults)
 			Else
@@ -374,14 +379,8 @@ Function manualAction(intAction)
 			End IF
 			call logDownloadResult(searchResults.updates, downloadResults)
 			call recordDownloadResult(searchResults.updates, downloadResults)
-		ElseIf (intAction = WUF_ACTION_INSTALL) Then
-			If (WUF_ASYNC = 1) Then
-				Set downloadResults = wuDownloadAsync(searchResults)
-			Else
-				Set downloadResults = wuDownload(searchResults)
-			End IF
-			call logDownloadResult(searchResults.updates, downloadResults)
-			call recordDownloadResult(searchResults.updates, downloadResults)
+		End If
+		If ( (intAction and  WUF_ACTION_INSTALL) <> 0 ) Then
 			If (WUF_ASYNC = 1) Then
 				Set installResults = wuInstallAsync(searchResults)
 			Else
@@ -418,7 +417,7 @@ Function recordSearchResult( objSearchResults )
 		Dim update, updateLine
 		Set update = objSearchResults.Updates.Item(i)
 
-		updateLine = update.title & "|" & update.uniqueid
+		updateLine = update.title & "|" & update.identity.updateId & "|" & update.installationBehavior.impact
 		If (i = 0 ) Then
 			searchlist = updateLine
 		Else
@@ -444,7 +443,7 @@ Function recordDownloadResult( objUpdates, objDownloadResults )
 		Dim update, updateLine, dlLine
 		Set update = objUpdates.Item(i)
 
-		dlLine = update.title & "|" & update.uniqueid & "|" & _
+		dlLine = update.title & "|" & update.identity.updateId  & "|" & _
 			getOperationResultMsg(objDownloadResults.GetUpdateResult(i).ResultCode)
 		If (i = 0 ) Then
 			dlList = dlLine
@@ -474,7 +473,7 @@ Function recordInstallationResult( objUpdates, objInstallationResults )
 		Dim update, updateLine, instLine
 		Set update = objUpdates.Item(i)
 
-		instLine = update.title & "|" & update.uniqueid & "|" & _
+		instLine = update.title & "|" & update.identity.updateId & "|" & _
 			getOperationResultMsg(objInstallationResults.GetUpdateResult(i).ResultCode)
 		If ( i = 0 ) Then
 			instList = instLine
@@ -526,6 +525,9 @@ Function wuSearch(strFilter) 'return ISearchResult
 	
 	logDebug("Creating Update Searcher.")
 	Set updateSearcher = gObjUpdateSession.CreateUpdateSearcher()
+	
+	logDebug("Update Server Selection = " & updateSearcher.serverSelection)
+	logDebug("Update Server Service ID = " & updateSearcher.serviceID)
 	
 	logInfo("Starting Update Search.")
 	
@@ -831,8 +833,6 @@ Function logInstallationResult(objUpdates, objInstallationResult)
 	Next
 End Function
 
-
-
 '*******************************************************************************
 Function getAuScheduleText()
 	Dim strDay
@@ -1055,7 +1055,7 @@ End Function
 '*******************************************************************************
 Function getComputerName() 'return computername
 	Dim strLocalComputerName
-	strLocalComputerName = gWshShell.ExpandEnvironmentStrings("%Computername%")
+	strLocalComputerName = WScript.CreateObject("WScript.Shell").ExpandEnvironmentStrings("%Computername%")
 	getComputerName = strLocalComputerName
 End Function
 
@@ -1270,23 +1270,25 @@ Function logEnvironment()
 		Next
 		logDebug( "Command arguments: " & strArguments )
 	End If
-	logInfo("Action: " & getActionMessage(gAction))
+	logInfo("Action: (" & gAction & ") " & getActionMessage(gAction))
 	logInfo("Shutdown Option: " & shutdownOptionMessage() )
 	logInfo("Force Shutdown Option: " & forceShutdownMessage() )
 End Function
 
 '**************************************************************************************
 Function getActionMessage(intAction)
-	If (intAction = WUF_ACTION_AUTO) Then
-		getActionMessage = "Auto"
-	ElseIf (intAction = WUF_ACTION_SCAN) Then
-		getActionMessage = "Scan"
-	ElseIf (intAction = WUF_ACTION_DOWNLOAD) Then
-		getActionMessage = "Download"
-	ElseIf (intAction = WUF_ACTION_INSTALL) Then
-		getActionMessage = "Install"
-	Else
-		getActionMessage = "Unknown"
+	getActionMessage = ""
+	If ( (intAction and WUF_ACTION_AUTO) <> 0 ) Then
+		getActionMessage = getActionMessage & "Auto "
+	End If
+	If ( (intAction and  WUF_ACTION_SCAN) <> 0 ) Then
+		getActionMessage = getActionMessage & "Scan "
+	End If
+	If ( (intAction and  WUF_ACTION_DOWNLOAD) <> 0 ) Then
+		getActionMessage = getActionMessage & "Download "
+	End If
+	If ( (intAction and  WUF_ACTION_INSTALL) <> 0 ) Then
+		getActionMessage = getActionMessage & "Install "
 	End If
 End Function
 
@@ -1439,7 +1441,7 @@ End Function
 
 '*******************************************************************************
 Function genRunId()
-	genRunId = getDateStamp() & "_" & getTimeStamp2() & "_" & genRandId(100)
+	genRunId =  getComputerName() & "_" & getDateStamp() & "_" & getTimeStamp2() & "_" & genRandId(100)
 End Function
 
 '*******************************************************************************
@@ -1476,9 +1478,8 @@ Function rebootPlanned()
 		OR ( gForceShutdown ) )
 End Function
 
-'=============================================================
-'=================================================================
-' Error Handling -------------------------------------------------
+'===============================================================================
+' Error Handling ---------------------------------------------------------------
 ' This section supports try-catch&throw functionality in vbscript.
 ' You should only surround one exception throwing command with this
 ' construct, otherwise you might lose the error.
