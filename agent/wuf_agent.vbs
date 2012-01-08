@@ -90,7 +90,7 @@ Dim gObjDummyDict	'Used for async wu operations
 
 Class DummyClass 'set up dummy class for async download and installation calls
 	Public Default Function DummyFunction()
-		LogDebug( "Dummy Function Called" )
+		
 	End Function		
 End Class
 
@@ -314,6 +314,7 @@ Function verify() 'return boolean
 	If (isCscript()) Then
 		logInfo( "[+] cscript used." )
 	Else
+		WScript.echo  "[-] Not using cscript to run wuf, failed." 
 		logError( "[-] Not using cscript to run wuf, failed." )
 	End If
 	
@@ -382,7 +383,7 @@ Function manualAction(intAction)
 	Set searchResults = wuSearch( WUF_DEFAULT_SEARCH_FILTER )
 	intUpdateCount = searchResults.Updates.Count
 	
-	logUpdateSearchResult( searchResults )
+	logSearchResult( searchResults )
 	recordSearchResult( searchResults )
 	
 	If (intUpdateCount > 0) Then
@@ -639,7 +640,7 @@ Function wuDownloadAsync(objSearchResult)
 	logInfo("Downloading Updates Asynchronously")
 	
 	Set dlJob = downloader.beginDownload(gObjDummyDict.Item("DummyFunction"),gObjDummyDict.Item("DummyFunction"),vbNull)
-	set dlProgress = dlJob.getProgress()
+	Set dlProgress = dlJob.getProgress()
 	
 	While Not getAsyncWuOpComplete(downloader.Updates, dlProgress) 
 		set dlProgress = dlJob.getProgress()
@@ -804,6 +805,25 @@ Function getAsyncWuOpComplete(objUpdates, objOperationProgress)
 		getAsyncWuOpComplete = true
 	End If
 	
+End Function
+
+'**************************************************************************************
+Function logSearchResult(objSearchResults)
+	logInfo("Number of missing updates: " & objSearchResults.Updates.Count)
+
+	logInfo("--- Missing Update List ---")
+	Dim i
+	For i = 0 To (objSearchResults.Updates.Count-1)
+		Dim update, objCategories
+		Set update = objSearchResults.Updates.Item(i)
+		Set objCategories = objSearchResults.Updates.Item(i).Categories
+		logInfo("Missing: " & objSearchResults.Updates.Item(i) )
+		Dim j
+		For j = 0 to objCategories.Count-1
+		  logDebug("--Category: " & objCategories.Item(j).Description)
+		Next
+	Next
+	logInfo("------------------------")
 End Function
 
 '**************************************************************************************
@@ -1251,25 +1271,6 @@ Function getOperationResultMsg(intResultCode)
 	End If
 	
 	getOperationResultMsg = strResult
-End Function
-
-'**************************************************************************************
-Function logUpdateSearchResult(objSearchResults)
-	logInfo("Number of missing updates: " & objSearchResults.Updates.Count)
-
-	logInfo("--- Missing Update List ---")
-	Dim i
-	For i = 0 To (objSearchResults.Updates.Count-1)
-		Dim update, objCategories
-		Set update = objSearchResults.Updates.Item(i)
-		Set objCategories = objSearchResults.Updates.Item(i).Categories
-		logInfo("Missing: " & objSearchResults.Updates.Item(i) )
-		Dim j
-		For j = 0 to objCategories.Count-1
-		  logDebug("--Category: " & objCategories.Item(j).Description)
-		Next
-	Next
-	logInfo("------------------------")
 End Function
 
 '**************************************************************************************
