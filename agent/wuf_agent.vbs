@@ -809,8 +809,9 @@ End Function
 
 '**************************************************************************************
 Function logSearchResult(objSearchResults)
-	logInfo("Number of missing updates: " & objSearchResults.Updates.Count)
 
+	logInfo("Number of missing updates: " & objSearchResults.Updates.Count)
+	
 	logInfo("--- Missing Update List ---")
 	Dim i
 	For i = 0 To (objSearchResults.Updates.Count-1)
@@ -824,13 +825,14 @@ Function logSearchResult(objSearchResults)
 		Next
 	Next
 	logInfo("------------------------")
+	
 End Function
 
 '**************************************************************************************
 Function logDownloadResult(objUpdates, objDownloadResult)
 
 	If NOT (isObject(objDownloadResult) ) Then
-		logInfo("No download result recorded.")
+		logInfo( "No download result recorded." )
 		Exit Function
 	End If
 
