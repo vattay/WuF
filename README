@@ -4,8 +4,8 @@
 
 The WuF is a utility that forces the windows update agent to perform actions that normally must be performed via the windows
  update website or the agent GUI. It can be used locally or remotely. It is intended for use in an environment where many 
-windows computers must be updated in discrete batches and where any useful scripting languages and executables are not permitted
- by draconian policy.
+windows computers must be updated in discrete batches and where any useful scripting languages and executables are not 
+permitted by draconian policy.
 
 The WuF is composed of two parts, the controller (wuf_controller.bat) and the agent (wuf_agent.vbs). The agent is a standalone
  wrapper of the WSUS API, which allows you to scan for, download, and install windows updates on a single computer. It can be 
