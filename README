@@ -15,6 +15,10 @@ wuf_controller.bat
 agent\wuf_agent.vbs
 
 Controller:
+
+Pre-requisites:
+ psexec on the command computer.
+
 The controller will perform update operations on many computers. You provide the list of computers in a single newline delimited text file, and the controller will perform the requested action. The available actions are auto, scan, download, and install. Auto simply calls the computers windows update agent configured behavior. Scan only checks for missing updates. Download downloads missing updates. Install downloads and installs missing updates. You can also specify a network dropbox where the results of the script are dropped. The results include the number and enumeration of missing updates, the status of the requested operations, start/finish time, etc.
 
 Agent:
