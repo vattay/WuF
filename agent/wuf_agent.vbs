@@ -68,7 +68,7 @@ Const WUF_DEFAULT_RESULT_DROPBOX = "c:\temp\wuf_dropbox"
 Const WUF_DEFAULT_LOG_DROP_NAME = "wufa_drop_localhost.log"
 Const WUF_DEFAULT_RESULT_DROP_NAME = "wufa_drop_result_localhost.txt"
 
-Const WUF_USAGE = "wuf_agent.vbs [/aA | /aS | /aD | /aI] [/sN | /sR | /sH] [/fS] [/d:<unc_path>] [/n:<result_name>]"
+Const WUF_USAGE = "wuf_agent.vbs [/aA | /aS | /aD | /aI] [/sN | /sR | /sH] [/fS] [/oN:<name>] [/d:<unc_path>] [/n:<result_name>]"
 
 'Globals - avoid modification after initialize()
 Dim stdErr, stdOut	'std stream access
@@ -99,6 +99,11 @@ main()
 
 '*******************************************************************************
 Function main()
+
+	If Not(isCscript()) Then
+		WScript.echo  "Unsupported script host, this program must be run with cscript." 
+		WScript.quit
+	End If
 	
 	If (WUF_CATCH_ALL_EXCEPTIONS = 1) Then
 		On Error Resume Next
@@ -216,6 +221,9 @@ Function parseArgs()
     Dim objArgs, objNamedArgs, objUnnamedArgs
 	Dim success
 	
+	Dim booShutdownFlag
+	
+	booShutdownFlag = false
 	success = false
 	
 	Set objArgs = WScript.Arguments
@@ -228,18 +236,26 @@ Function parseArgs()
 		Dim i
 		For Each arg in objNamedArgs
 			Dim strArrTemp
-			logDebug("Testing arg " & arg)
 			If ( headStrI(arg,"a") ) Then
 				If Not ( parseAction(arg) ) Then
 					Err.Raise WUF_INPUT_ERROR, "Wuf.parseArgs()", "Invalid action " & objargs(i)
 				End If
 			ElseIf ( headStrI(arg,"s") ) Then 
+				If (booShutdownFlag) Then 
+					Err.Raise WUF_INPUT_ERROR, "Wuf.parseArgs()", "More than one shutdown option."
+				End If
 				If Not( parseShutdownOption(arg) ) Then
 					Err.Raise WUF_INPUT_ERROR, "Wuf.parseArgs()", "Invalid shutdown option."
+				Else
+					booShutdownFlag = true
 				End If
 			ElseIf ( headStrI(arg,"f") ) Then
 				If Not( parseForceShutdown(arg) ) Then
 					Err.Raise WUF_INPUT_ERROR, "Wuf.parseArgs()", "Invalid force option."
+				End If
+			ElseIf ( headStrI(arg,"o") ) Then
+				If Not( parseOutputOption(arg) ) Then
+					Err.Raise WUF_INPUT_ERROR, "Wuf.parseArgs()", "Invalid output option."
 				End If
 			ElseIf ( strCompI(arg,"d") ) Then
 				gDropBox = Wscript.Arguments.Named("d")
@@ -247,12 +263,12 @@ Function parseArgs()
 				gResultDropName = Wscript.Arguments.Named("n")			
 			Else
 				success = false
-				Err.Raise WUF_INPUT_ERROR, "Wuf.parseArgs()", "Unknown argument: " & objargs(i)	
+				Err.Raise WUF_INPUT_ERROR, "Wuf.parseArgs()", "Unknown named argument: " & objargs(i)	
 			End If
 		Next
 		For Each arg in objUnnamedArgs
 			success = false
-			Err.Raise WUF_INPUT_ERROR, "Wuf.parseArgs()", "Unknown argument: " & arg	
+			Err.Raise WUF_INPUT_ERROR, "Wuf.parseArgs()", "Unknown argument: " & objUnnamedArgs(i)	
 		Next
 	Else
 		' No Args
@@ -305,18 +321,21 @@ Function parseForceShutdown(strArgVal) 'return boolean
 End Function
 
 '*******************************************************************************
+Function parseOutputOption(strArgVal)
+	parseOutputOption = True
+	If (strCompI(strArgVal,"oN")) Then
+		gResultLocation = Wscript.Arguments.Named(strArgVal)	
+	Else
+		parseOutputOption = False
+	End If
+End Function
+
+'*******************************************************************************
 Function verify() 'return boolean
 	Dim verified
 	
 	logInfo( "---Verifying Configuration...---" )
 	verified = True
-	
-	If (isCscript()) Then
-		logInfo( "[+] cscript used." )
-	Else
-		WScript.echo  "[-] Not using cscript to run wuf, failed." 
-		logError( "[-] Not using cscript to run wuf, failed." )
-	End If
 	
 	If (checkUpdateAgent()) Then
 		logInfo( "[+] Windows Update Agent is up to date." )
