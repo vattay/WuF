@@ -185,7 +185,7 @@ Function configure()
 	
 	logDebug( "Parsing Configuration" )
 	
-	'On Error Resume Next
+	On Error Resume Next
 		parseArgs()
 	Dim Ex
 	Set Ex = New ErrWrap.catch() 'catch
