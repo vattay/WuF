@@ -18,17 +18,23 @@ Option Explicit
 '*******************************************************************************
 'Settings------------------------------
 Const LOG_LEVEL = 3
+Const VERBOSE_LEVEL = 2
 Const WUF_CATCH_ALL_EXCEPTIONS = 0
 Const WUF_ASYNC = 1
 Const WUF_SHUTDOWN_DELAY = 60
 '--------------------------------------
+  
+Const VERBOSE_LEVEL_HIGH = 2
+Const VERBOSE_LEVEL_LOW = 1
+Const VERBOSE_LEVEL_QUIET = 0
   
 Const LOG_LEVEL_DEBUG = 3
 Const LOG_LEVEL_INFO = 2
 Const LOG_LEVEL_WARN = 1
 Const LOG_LEVEL_ERROR = 0
 
-Const WUF_AGENT_VERSION = "1.8"
+Const APP_NAME = "Wuf Agent"
+Const APP_VERSION = "1.8"
 Const WU_AGENT_VERSION = "7.0.6000.374"
 Const WU_AGENT_LOCALE_DELIM = "."
 Const HKEY_CURRENT_USER = &H80000001
@@ -61,8 +67,8 @@ Const WUF_DEFAULT_FORCE_SHUTDOWN_ACTION = false
 Const WUF_DEFAULT_ACTION = 1 
 Const WUF_DEFAULT_SHUTDOWN_OPTION = 0
 
-Const WUF_DEFAULT_LOG_LOCATION = "C:\Windows\Temp\wufa_local" 
-Const WUF_DEFAULT_RESULT_LOCATION = "C:\Windows\Temp\wufa_local_result" 
+Const WUF_DEFAULT_LOG_LOCATION = "wufa_local"
+Const WUF_DEFAULT_RESULT_LOCATION = "wufa_local_result" 
 
 Const WUF_DEFAULT_RESULT_DROPBOX = "c:\temp\wuf_dropbox"
 Const WUF_DEFAULT_LOG_DROP_NAME = "wufa_drop_localhost.log"
@@ -80,13 +86,13 @@ Dim gAction			'This applications action
 Dim gShutdownOption	'Restart, shutdown, or do nothing
 Dim gForceShutdown	'Do the shutdown option even if not required
 Dim gFileLog 		'Wuf Agent Log object
-Dim gResultMap		'Holds results until ready to write to file
 Dim gDropBox		'Where results are sent after completion
 Dim gResultDropName	'Name of result file sent to dropbox
-Dim gLogDropName	'Name of log file sent to dropbox
 Dim gRunId			'Unique id of run
 Dim gObjUpdateSession 'The windows update session used for all wu operations
 Dim gObjDummyDict	'Used for async wu operations
+Dim gResWrt	'Object that takes care of result writing
+Dim gUseDropBox
 
 Class DummyClass 'set up dummy class for async download and installation calls
 	Public Default Function DummyFunction()
@@ -129,7 +135,9 @@ Function core()
 			preAction()
 			doAction(gAction)
 			postAction()
-			feedBack()
+			If (gUseDropBox) Then
+				feedBack()
+			End If
 		End If
 	End If
 	cleanup()
@@ -145,7 +153,6 @@ Function initialize()
 
 	Set gWshShell = WScript.CreateObject("WScript.Shell")
 	Set gWshSysEnv = gWshShell.Environment("PROCESS")
-	Set gResultMap = CreateObject("Scripting.Dictionary")
 	
 	Set gObjDummyDict = CreateObject("Scripting.Dictionary")
 	
@@ -153,12 +160,13 @@ Function initialize()
 	
 	gLogLocation = WUF_DEFAULT_LOG_LOCATION & "_" & gRunId & ".log"
 	gResultLocation = WUF_DEFAULT_RESULT_LOCATION  & "_" & gRunId & ".txt"
+	gResWrt = NULL
 	gAction = WUF_ACTION_UNDEFINED
 	gShutdownOption = WUF_DEFAULT_SHUTDOWN_OPTION
 	gForceShutdown = WUF_DEFAULT_FORCE_SHUTDOWN_ACTION
 	gDropBox = WUF_DEFAULT_RESULT_DROPBOX
-	gResultDropName = Replace(WUF_DEFAULT_RESULT_DROP_NAME, "localhost", getComputerName())
-	gLogDropName = Replace(WUF_DEFAULT_LOG_DROP_NAME, "localhost", getComputerName())
+	gResultDropName = ""
+	gUseDropBox = false
 
 
 End Function
@@ -170,18 +178,14 @@ Function configure()
 	
 	configureLogFile(gLogLocation)
 	
-	logInfo( "WUF Agent " & WUF_AGENT_VERSION )
+	logInfo( "WUF Agent " & APP_VERSION )
 	logInfo( "Log system initialized." )
 	
 	logInfo( "Run Id: " & gRunId )
 	
 	logDebug( "Parsing Configuration" )
 	
-	configureResultMap(gResultMap)
-	
-
-	
-	On Error Resume Next
+	'On Error Resume Next
 		parseArgs()
 	Dim Ex
 	Set Ex = New ErrWrap.catch() 'catch
@@ -199,6 +203,9 @@ Function configure()
 		End If
 	End If
 	
+	gResWrt.wl(APP_NAME & " " & APP_VERSION & " initialized at " & Now())
+	call gResWrt.wal("init.ruid", gRunId ) 
+	
 	logDebug("Creating Update Session.")
 	Set gObjUpdateSession = CreateObject("Microsoft.Update.Session")
 	
@@ -207,13 +214,6 @@ Function configure()
 	
 End Function
 
-'*******************************************************************************
-Function configureResultMap(objResultMap)
-
-	call writeGlobalResultMap( "init.time", Now() )
-	call writeGlobalResultMap( "init.ruid", gRunId )
-	
-End Function
 
 '*******************************************************************************
 Function parseArgs()
@@ -222,7 +222,9 @@ Function parseArgs()
 	Dim success
 	
 	Dim booShutdownFlag
+	Dim booResultFileFlag
 	
+	booResultFileFlag = false
 	booShutdownFlag = false
 	success = false
 	
@@ -256,16 +258,22 @@ Function parseArgs()
 			ElseIf ( headStrI(arg,"o") ) Then
 				If Not( parseOutputOption(arg) ) Then
 					Err.Raise WUF_INPUT_ERROR, "Wuf.parseArgs()", "Invalid output option."
+				Else
+					booResultFileFlag = true
 				End If
 			ElseIf ( strCompI(arg,"d") ) Then
 				gDropBox = Wscript.Arguments.Named("d")
 			ElseIf ( strCompI(arg,"n") ) Then
-				gResultDropName = Wscript.Arguments.Named("n")			
+				gUseDropBox = true
+				gResultDropName = Wscript.Arguments.Named("n")
 			Else
 				success = false
 				Err.Raise WUF_INPUT_ERROR, "Wuf.parseArgs()", "Unknown named argument: " & objargs(i)	
 			End If
 		Next
+		If Not (booResultFileFlag) Then
+			Set gResWrt = New ResultWriter.initCon(VERBOSE_LEVEL)
+		End If
 		For Each arg in objUnnamedArgs
 			success = false
 			Err.Raise WUF_INPUT_ERROR, "Wuf.parseArgs()", "Unknown argument: " & objUnnamedArgs(i)	
@@ -324,7 +332,14 @@ End Function
 Function parseOutputOption(strArgVal)
 	parseOutputOption = True
 	If (strCompI(strArgVal,"oN")) Then
-		gResultLocation = Wscript.Arguments.Named(strArgVal)	
+		Dim strResultLocation
+		strResultLocation = Wscript.Arguments.Named(strArgVal)
+		If strResultLocation = "" Then
+			Set gResWrt = New ResultWriter.initG(VERBOSE_LEVEL)
+		Else
+			Set gResWrt = New ResultWriter.init(strResultLocation,VERBOSE_LEVEL)
+		End If
+		gResultLocation = Wscript.Arguments.Named(strArgVal) '@@REMOVE
 	Else
 		parseOutputOption = False
 	End If
@@ -433,16 +448,14 @@ End Function
 
 '*******************************************************************************
 Function recordPreConditions()
-	call writeGlobalResultMap("pre.restart.required", _
-		isShutdownActionPending())
+	call gResWrt.wal( "pre.restart.required", isShutdownActionPending() )
 End Function
 
 '*******************************************************************************
 Function recordSearchResult( objSearchResults )
-	call writeGlobalResultMap("search.result.count", _
-		objSearchResults.Updates.Count)
+	call gResWrt.wal("search.result.count", objSearchResults.Updates.Count)
 		
-	call writeGlobalResultMap( "search.result.code", _
+	call gResWrt.wal( "search.result.code", _
 		getOperationResultMsg(objSearchResults.ResultCode) )
 	
 	Dim searchList
@@ -461,14 +474,14 @@ Function recordSearchResult( objSearchResults )
 		End If
 	Next
 	
-	call writeGlobalResultMap( "search.result.list", searchList)
+	call gResWrt.wal( "search.result.list", searchList)
 End Function
 
 '*******************************************************************************
 Function recordDownloadResult( objUpdates, objDownloadResults )
-	call writeGlobalResultMap("download.result.count", _
+	call gResWrt.wal("download.result.count", _
 		objUpdates.Count)
-	call writeGlobalResultMap( "download.result.code", _
+	call gResWrt.wal( "download.result.code", _
 		getOperationResultMsg(objDownloadResults.ResultCode) )
 	
 	Dim dlList
@@ -488,17 +501,17 @@ Function recordDownloadResult( objUpdates, objDownloadResults )
 		End If
 	Next
 	
-	call writeGlobalResultMap( "download.result.list", dlList)
+	call gResWrt.wal( "download.result.list", dlList)
 End Function
 
 '*******************************************************************************
 Function recordInstallationResult( objUpdates, objInstallationResults )
-	call writeGlobalResultMap("install.result.count", _
+	call gResWrt.wal("install.result.count", _
 		objUpdates.Count)
 		
-	call writeGlobalResultMap( "install.result.code", _
+	call gResWrt.wal( "install.result.code", _
 		getOperationResultMsg(objInstallationResults.ResultCode) )
-	call writeGlobalResultMap( "install.reboot_required", _
+	call gResWrt.wal( "install.reboot_required", _
 		objInstallationResults.RebootRequired )
 	
 	Dim instList
@@ -518,13 +531,13 @@ Function recordInstallationResult( objUpdates, objInstallationResults )
 		End If
 	Next
 	
-	call writeGlobalResultMap( "install.result.list", instList)
+	call gResWrt.wal( "install.result.list", instList)
 End Function
 
 '*******************************************************************************
 Function recordPostResult()
-	call writeGlobalResultMap("post.rebootPlanned", rebootPlanned())
-	call writeGlobalResultMap("post.complete_time", Now())
+	call gResWrt.wal("post.rebootPlanned", rebootPlanned())
+	call gResWrt.wal("post.complete_time", Now())
 End Function
 
 '*******************************************************************************
@@ -540,9 +553,9 @@ End Function
 
 '*******************************************************************************
 Function feedBack()
-	call writeResultMapFile(gResultMap, gResultLocation)
-	call sendResults()
-	'call sendLog()
+	If gResWrt.isUsingFile() And gUseDropBox Then
+		call sendResults()
+	End If
 End Function
 
 '*******************************************************************************
@@ -664,6 +677,7 @@ Function wuDownloadAsync(objSearchResult)
 	While Not getAsyncWuOpComplete(downloader.Updates, dlProgress) 
 		set dlProgress = dlJob.getProgress()
 		WScript.Sleep(10000)
+		gResWrt.wl( "Download Progress: " & dlProgress.percentcomplete & "%" )
 		logInfo( "Download Progress: " & dlProgress.percentcomplete & "%" )
 	Wend
 	If (dlJob.isCompleted = TRUE) Then 
@@ -787,6 +801,7 @@ Function wuInstallAsync(objSearchResult)
 	While Not getAsyncWuOpComplete(installer.Updates, installProgress) 
 		set installProgress = installJob.getProgress()
 		WScript.Sleep(10000)
+		gResWrt.wl( "Install Progress: " & installProgress.percentcomplete & "%" )
 		logInfo( "Install Progress: " & installProgress.percentcomplete & "%" )
 	Wend
 	If (installJob.isCompleted = TRUE) Then 
@@ -831,7 +846,6 @@ Function logSearchResult(objSearchResults)
 
 	logInfo("Number of missing updates: " & objSearchResults.Updates.Count)
 	
-	logInfo("--- Missing Update List ---")
 	Dim i
 	For i = 0 To (objSearchResults.Updates.Count-1)
 		Dim update, objCategories
@@ -843,7 +857,6 @@ Function logSearchResult(objSearchResults)
 		  logDebug("--Category: " & objCategories.Item(j).Description)
 		Next
 	Next
-	logInfo("------------------------")
 	
 End Function
 
@@ -971,19 +984,11 @@ Function checkUpdateAgent() 'returns boolean (true if version is ok)
 End Function
 
 '*******************************************************************************
-Function sendLog()
-	logDebug("Attempting to send log")
-	Dim strFileName
-	strFileName = gLogDropName
-	call sendFile(gLogLocation, gDropBox, strFileName )
-End Function
-
-'*******************************************************************************
 Function sendResults()
 	logDebug("Attempting to send results")
 	Dim strFileName
 	strFileName = gResultDropName
-	call sendFile(gResultLocation, gDropBox, strFileName )
+	call sendFile(gResWrt.getLocation(), gDropBox, strFileName )
 End Function
 
 '*******************************************************************************
@@ -1392,8 +1397,6 @@ Function logEntry(intType, strMsg)
 	If (isCScript()) Then 
 		If (intType <= LOG_LEVEL_WARN ) Then
 			stdErr.writeLine strLine
-		Else
-			stdOut.writeLine strLine
 		End If
 	End If
 End Function
@@ -1488,33 +1491,106 @@ Function setGlobalRunId()
 End Function
 
 '*******************************************************************************
-Function writeGlobalResultMap(key,value)
-	gResultMap.Add key, value
-End Function
-
-'*******************************************************************************
-Function writeResultMapFile(objResultMap, strResultFileLocation)
-
-	Dim fso
-	Set fso = WScript.CreateObject( "Scripting.FileSystemObject" )
-	
-	Dim fileResult
-	Set fileResult = fso.createTextFile( strResultFileLocation, True, -2 )
-	
-	Dim key
-	For Each key In objResultMap
-		fileResult.writeLine( key & ":" & gResultMap.Item(key) & ";" )
-	Next
-	
-	fileResult.close()
-End Function
-
-'*******************************************************************************
 Function rebootPlanned()
 	rebootPlanned = ( (isShutdownActionPending() _
 		AND ( gShutdownOption >= WUF_SHUTDOWN_RESTART )) _
 		OR ( gForceShutdown ) )
 End Function
+
+Function genResultFileName()
+	genResultFileName = genRunId & ".txt"
+End Function
+
+'===============================================================================
+Class ResultWriter
+	Dim intVerbosity
+	Dim strLocation
+	Dim fRes
+	Dim stdOut
+	Dim stdErr
+	Dim booConsoleOnly
+	
+	'Custom Constructor - Console Only
+	Function initCon(intVerbosity)
+		booConsoleOnly = true
+		Set stdOut = WScript.StdOut
+		Set stdErr = Wscript.StdErr
+		
+		Set initCon = Me
+	End Function
+	
+	'Custom Constructor - Take filename
+	Function init(strResultLocation, intVerbosity)
+		Set stdOut = WScript.StdOut
+		Set stdErr = Wscript.StdErr
+		
+		strLocation = strResultLocation
+		
+		Dim fso
+		Set fso = CreateObject("Scripting.FileSystemObject")
+
+		Set fRes = fso.createTextFile( strResultLocation, True, -2 )
+		Set init = Me
+	End Function
+	
+	'Custom Constructor - Generate filename
+	Function initG(intVerbosity)
+		Set stdOut = WScript.StdOut
+		Set stdErr = Wscript.StdErr
+		
+		Dim fso
+		Set fso = CreateObject("Scripting.FileSystemObject")
+		
+		Dim strResultLocation
+		strResultLocation = genRunId()
+		
+		strLocation = strResultLocation
+
+		Set fRes = fso.createTextFile( strResultLocation, True, -2 )
+		Set initG = Me
+	End Function
+	
+	Private Function format(str)
+		format = str & ";"
+	End Function
+	
+	Private Function wrtLn(strMessage)
+		stdOut.writeLine strMessage
+		If Not (booConsoleOnly) Then
+			fRes.writeLine(format(strMessage))
+		End If
+	End Function
+	
+	Function wl(strMessage)
+		call wrtLn(strMessage)
+	End Function
+	
+	Function wal(strAttribute,strValue)
+		call wrtLn(strAttribute & ":" & strValue)
+	End Function
+	
+	Function writeLineVerbose(strMessage)
+		If intVerbosity >= VERBOSE_LEVEL_LOW Then wrtLn(strMessage) 
+	End Function
+	
+	Function writeLineVeryVerbose(strMessage)
+		If intVerbosity >= VERBOSE_LEVEL_HIGH Then wrtLn(strMessage)
+	End Function
+	
+	Function getLocation()
+		getLocation = strLocation
+	End Function
+	
+	Function isUsingFile()
+		isUsingFile = Not booConsoleOnly
+	End Function
+	
+	Sub Class_Terminate()
+		If Not (booConsoleOnly) And (isObject(fRes)) Then
+			fRes.close()
+		End If
+	End Sub
+End Class
 
 '===============================================================================
 ' Error Handling ---------------------------------------------------------------
@@ -1576,12 +1652,3 @@ Class ErrWrap
 	End Property
 	
 End Class
-
-' Re-throws an existing error
-' Limitation: The error line number will be set to a line within this function
-' rendering the line number useless.
-Function throw(wErr) 'returns nothing
-	On Error GoTo 0
-	Err.Raise wErr.number, wErr.source, wErr.description, wErr.HelpContext, wErr.HelpFile
-End Function
-'-----------------------------------------------------------------
