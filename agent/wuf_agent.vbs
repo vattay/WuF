@@ -96,7 +96,7 @@ Dim gUseDropBox
 
 Class DummyClass 'set up dummy class for async download and installation calls
 	Public Default Function DummyFunction()
-		
+	
 	End Function		
 End Class
 
@@ -193,7 +193,7 @@ Function configure()
 	If (Ex.number <> 0) Then
 		If (Ex.number = WUF_INPUT_ERROR) Then
 			call logErrorEx("Improper input.", Ex)
-			logInfo("Usage: " & WUF_USAGE)
+			logError("Usage: " & WUF_USAGE)
 			configure = false
 			Exit Function
 		Else
@@ -466,7 +466,7 @@ Function recordSearchResult( objSearchResults )
 		Dim update, updateLine
 		Set update = objSearchResults.Updates.Item(i)
 
-		updateLine = update.title & "|" & update.identity.updateId & "|" & update.installationBehavior.impact
+		updateLine = update.title & "|" & update.installationBehavior.impact
 		If (i = 0 ) Then
 			searchlist = updateLine
 		Else
@@ -492,7 +492,7 @@ Function recordDownloadResult( objUpdates, objDownloadResults )
 		Dim update, updateLine, dlLine
 		Set update = objUpdates.Item(i)
 
-		dlLine = update.title & "|" & update.identity.updateId  & "|" & _
+		dlLine = update.title & "|" &  _
 			getOperationResultMsg(objDownloadResults.GetUpdateResult(i).ResultCode)
 		If (i = 0 ) Then
 			dlList = dlLine
@@ -522,7 +522,7 @@ Function recordInstallationResult( objUpdates, objInstallationResults )
 		Dim update, updateLine, instLine
 		Set update = objUpdates.Item(i)
 
-		instLine = update.title & "|" & update.identity.updateId & "|" & _
+		instLine = update.title & "|" & _
 			getOperationResultMsg(objInstallationResults.GetUpdateResult(i).ResultCode)
 		If ( i = 0 ) Then
 			instList = instLine
@@ -658,28 +658,114 @@ Function wuDownload(objSearchResult)
 End Function
 
 '*******************************************************************************
+Function getDownloadPhase(intPhase)
+	Select Case intPhase
+	  Case 1
+		getDownloadPhase = "Initializing"
+	  Case 2
+		getDownloadPhase = "Downloading"
+	  Case 3
+		getDownloadPhase = "Verifying"
+	  Case Else
+		getDownloadPhase = "?"
+	End Select
+End Function
+
+'*******************************************************************************
+Function getTotalUpdateDownloadProgress(downloadProgress,updates)
+	Dim kbDown
+	kbDown = (cLng(downloadProgress.TotalBytesDownloaded) / 1000)
+	
+	Dim kbTotal
+	kbTotal = (cLng(downloadProgress.TotalBytesToDownload) / 1000)
+
+	getTotalUpdateDownloadProgress = "(" & kbTotal & _
+		"/" & kbDown & ")[" & downloadProgress.percentComplete & "]"
+End Function
+
+'*******************************************************************************
+Function getCurrentUpdateDownloadProgress(downloadProgress,updates)
+	Dim dp
+	Set dp = downloadProgress
+	
+	Dim currentUpdate
+	Set currentUpdate = updates.item(dp.currentUpdateIndex)
+	
+	Dim currentUpdateKb
+	'There is almost always just one KB
+	currentUpdateKb = currentUpdate.KBArticleIDs.Item(0) 
+	
+	Dim dlSize
+	dlSize = cLng(dp.currentUpdateBytesToDownload) / 1000
+	
+	Dim dlDone
+	dlDone = cLng(dp.currentUpdateBytesDownloaded) / 1000
+	
+	Dim dlPhase
+	dlPhase = getDownloadPhase(dp.CurrentUpdateDownloadPhase)
+	
+	Dim dlPct
+	dlPct = dp.CurrentUpdatePercentComplete
+	
+	getCurrentUpdateDownloadProgress = "{" & currentUpdateKb & "-" & dlPhase & "}(" & dlSize & "/" & dlDone & ")[" & dlPct & "]"
+	
+End Function
+
+'*******************************************************************************
+Function getTotalUpdateInstallProgress(InstallProgress,updates)
+	getTotalUpdateInstallProgress = "[" & InstallProgress.percentComplete & "]"
+End Function
+
+'*******************************************************************************
+Function getCurrentUpdateInstallProgress(InstallProgress,updates)
+	Dim ip
+	Set ip = InstallProgress
+	
+	Dim currentUpdate
+	Set currentUpdate = updates.item(ip.currentUpdateIndex)
+	
+	Dim currentUpdateKb
+	'There is almost always just one KB
+	currentUpdateKb = currentUpdate.KBArticleIDs.Item(0) 
+	
+	
+	Dim ipPct
+	ipPct = ip.CurrentUpdatePercentComplete
+	
+	getCurrentUpdateInstallProgress = "{" & currentUpdateKb & "}[" & ipPct & "]"
+	
+End Function
+
+
+
+'*******************************************************************************
 Function wuDownloadAsync(objSearchResult)
 
 	Dim downloader, dlJob, dlProgress
 	Dim objDownloadResult
 	Dim count
+	Dim updates
 	
 	logDebug("Creating update downloader.")
 	
 	Set downloader = gObjUpdateSession.CreateUpdateDownloader() 
-	downloader.Updates = objSearchResult.Updates
+	Set updates = objSearchResult.Updates
+	downloader.Updates = updates
 	
 	logInfo("Downloading Updates Asynchronously")
 	
 	Set dlJob = downloader.beginDownload(gObjDummyDict.Item("DummyFunction"),gObjDummyDict.Item("DummyFunction"),vbNull)
 	Set dlProgress = dlJob.getProgress()
-	
-	While Not getAsyncWuOpComplete(downloader.Updates, dlProgress) 
+	gResWrt.wl("")
+	While Not getAsyncWuOpComplete(updates, dlProgress) 
 		set dlProgress = dlJob.getProgress()
-		WScript.Sleep(10000)
-		gResWrt.wl( "Download Progress: " & dlProgress.percentcomplete & "%" )
+		WScript.Sleep(2000)
+		gResWrt.rw("                                                                          ")
+		gResWrt.rw( "download.status" & getTotalUpdateDownloadProgress(dlProgress,updates) & _
+			";" & getCurrentUpdateDownloadProgress(dlProgress,updates) )
 		logInfo( "Download Progress: " & dlProgress.percentcomplete & "%" )
 	Wend
+	gResWrt.wl("")
 	If (dlJob.isCompleted = TRUE) Then 
 		logInfo("Asynchronous download call completed." )
 	Else
@@ -798,10 +884,13 @@ Function wuInstallAsync(objSearchResult)
 	Set installJob = installer.beginInstall(gObjDummyDict.Item("DummyFunction"),gObjDummyDict.Item("DummyFunction"),vbNull)
 	set installProgress = installJob.getProgress()
 	
+	gResWrt.rl("")
 	While Not getAsyncWuOpComplete(installer.Updates, installProgress) 
 		set installProgress = installJob.getProgress()
-		WScript.Sleep(10000)
-		gResWrt.wl( "Install Progress: " & installProgress.percentcomplete & "%" )
+		WScript.Sleep(5000)
+		gResWrt.rw("                                                                          ")
+		gResWrt.rw( "install.status" & getTotalUpdateInstallProgress(installProgress,updates) & _
+			";" & getCurrentUpdateInstallProgress(installProgress,updates) )
 		logInfo( "Install Progress: " & installProgress.percentcomplete & "%" )
 	Wend
 	If (installJob.isCompleted = TRUE) Then 
@@ -1554,27 +1643,49 @@ Class ResultWriter
 		format = str & ";"
 	End Function
 	
-	Private Function wrtLn(strMessage)
+	Private Function writeLine(strMessage)
 		stdOut.writeLine strMessage
 		If Not (booConsoleOnly) Then
 			fRes.writeLine(format(strMessage))
 		End If
 	End Function
 	
-	Function wl(strMessage)
-		call wrtLn(strMessage)
+	Private Function reWrite(strMessage)
+		stdOut.write chr(13) & strMessage
+		If Not (booConsoleOnly) Then
+			fRes.writeLine(format(strMessage))
+		End If
+	End Function
+	
+	Private Function write(strMessage)
+		stdOut.write strMessage
+		If Not (booConsoleOnly) Then
+			fRes.writeLine(format(strMessage))
+		End If
+	End Function
+	
+	Function wl(strMessage) 'write Line
+		call writeLine(strMessage)
+	End Function
+	
+	Function w(strMessage) 'write
+		call writeLine(strMessage)
+	End Function
+	
+	Function rw(strMessage) 're write
+		call reWrite(strMessage)
 	End Function
 	
 	Function wal(strAttribute,strValue)
-		call wrtLn(strAttribute & ":" & strValue)
+		call writeLine(strAttribute & ":" & strValue)
 	End Function
 	
 	Function writeLineVerbose(strMessage)
-		If intVerbosity >= VERBOSE_LEVEL_LOW Then wrtLn(strMessage) 
+		If intVerbosity >= VERBOSE_LEVEL_LOW Then writeLine(strMessage) 
 	End Function
 	
 	Function writeLineVeryVerbose(strMessage)
-		If intVerbosity >= VERBOSE_LEVEL_HIGH Then wrtLn(strMessage)
+		If intVerbosity >= VERBOSE_LEVEL_HIGH Then writeLine(strMessage)
 	End Function
 	
 	Function getLocation()
