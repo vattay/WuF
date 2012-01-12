@@ -240,7 +240,7 @@ Function parseArgs()
 			Dim strArrTemp
 			If ( headStrI(arg,"a") ) Then
 				If Not ( parseAction(arg) ) Then
-					Err.Raise WUF_INPUT_ERROR, "Wuf.parseArgs()", "Invalid action " & objargs(i)
+					Err.Raise WUF_INPUT_ERROR, "Wuf.parseArgs()", "Invalid action " & arg
 				End If
 			ElseIf ( headStrI(arg,"s") ) Then 
 				If (booShutdownFlag) Then 
@@ -261,14 +261,14 @@ Function parseArgs()
 				Else
 					booResultFileFlag = true
 				End If
-			ElseIf ( strCompI(arg,"d") ) Then
+			ElseIf ( strComp(arg,"d") = 0 ) Then
 				gDropBox = Wscript.Arguments.Named("d")
-			ElseIf ( strCompI(arg,"n") ) Then
+			ElseIf ( strComp(arg,"n") = 0 ) Then
 				gUseDropBox = true
 				gResultDropName = Wscript.Arguments.Named("n")
 			Else
 				success = false
-				Err.Raise WUF_INPUT_ERROR, "Wuf.parseArgs()", "Unknown named argument: " & objargs(i)	
+				Err.Raise WUF_INPUT_ERROR, "Wuf.parseArgs()", "Unknown named argument: " & arg	
 			End If
 		Next
 		If Not (booResultFileFlag) Then
@@ -276,7 +276,7 @@ Function parseArgs()
 		End If
 		For Each arg in objUnnamedArgs
 			success = false
-			Err.Raise WUF_INPUT_ERROR, "Wuf.parseArgs()", "Unknown argument: " & objUnnamedArgs(i)	
+			Err.Raise WUF_INPUT_ERROR, "Wuf.parseArgs()", "Unknown argument: " & arg
 		Next
 	Else
 		' No Args
@@ -754,7 +754,18 @@ Function wuDownloadAsync(objSearchResult)
 	
 	logInfo("Downloading Updates Asynchronously")
 	
-	Set dlJob = downloader.beginDownload(gObjDummyDict.Item("DummyFunction"),gObjDummyDict.Item("DummyFunction"),vbNull)
+	Dim Ex
+	On Error Resume Next
+		Set dlJob = downloader.beginDownload(gObjDummyDict.Item("DummyFunction"),gObjDummyDict.Item("DummyFunction"),vbNull)
+	Set Ex = New ErrWrap.catch() 'catch
+	On Error GoTo 0
+	If (Ex.number <> 0) Then
+		If Ex.number = cLng(&H80240044) Then
+			call logError( "Insufficient access, try running as administrator." )
+			Err.Raise Ex.Number, Ex.Source & "; wuDownloadAsync()", Ex.Description
+		End If
+	End If
+	
 	Set dlProgress = dlJob.getProgress()
 	gResWrt.wl("")
 	While Not getAsyncWuOpComplete(updates, dlProgress) 
@@ -765,7 +776,9 @@ Function wuDownloadAsync(objSearchResult)
 			";" & getCurrentUpdateDownloadProgress(dlProgress,updates) )
 		logInfo( "Download Progress: " & dlProgress.percentcomplete & "%" )
 	Wend
+	
 	gResWrt.wl("")
+	
 	If (dlJob.isCompleted = TRUE) Then 
 		logInfo("Asynchronous download call completed." )
 	Else
@@ -914,12 +927,15 @@ End Function
 
 '*******************************************************************************
 Function getAsyncWuOpComplete(objUpdates, objOperationProgress)
-
+	WScript.echo "Checking async op complete."
 	Dim i, intTotalResultCode
 	intTotalResultCode = 15
 	
 	For i = 0 To objUpdates.count - 1
+		WScript.echo "Checking [" & i & "] op: rescode=" & objOperationProgress.getUpdateResult(i).resultCode
+		WScript.echo "Total Result code before " & intTotalResultCode
 		intTotalResultCode = intTotalResultCode AND objOperationProgress.getUpdateResult(i).resultCode
+		WScript.echo "Total Result code after " & intTotalResultCode
 	Next
 	
 	If (intTotalResultCode = 0) Then
