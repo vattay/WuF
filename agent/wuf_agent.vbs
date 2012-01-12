@@ -19,7 +19,7 @@ Option Explicit
 'Settings------------------------------
 Const LOG_LEVEL = 3
 Const VERBOSE_LEVEL = 2
-Const WUF_CATCH_ALL_EXCEPTIONS = 0
+Const WUF_CATCH_ALL_EXCEPTIONS = 1
 Const WUF_ASYNC = 1
 Const WUF_SHUTDOWN_DELAY = 60
 '--------------------------------------
