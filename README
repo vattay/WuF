@@ -40,8 +40,8 @@ Pre-requisites:
 Cscript.exe (not wscript.exe)
 "Run as Administrator" on Windows Vista and 7.
 
-The agent can be run separate from the controller. In this mode, it simply operates as a command line wrapper around WSUS. 
-You can tell it to run the automatic operation, scan, download, or install.
+The agent can be run separate from the controller. In this mode, it simply operates as a command line wrapper around WUA. 
+You can tell it to run the configured automatic operation, scan, download, or install.
 
 *Props
 Lufi99 on technet who appears to have discovered the hack needed to get asynchronous WUA operations to work with VBScript.
