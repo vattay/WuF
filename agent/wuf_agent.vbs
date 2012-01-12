@@ -49,6 +49,7 @@ Const WSUS_REG_KEY_TARGET_GROUP = "TargetGroup"
 
 Const WUF_INPUT_ERROR = 10001
 Const WUF_FEEDBACK_ERROR = 10002
+Const WUF_NO_UPDATES = 10003
 
 Const WUF_ACTION_UNDEFINED = 0
 Const WUF_ACTION_AUTO = 	1
@@ -406,10 +407,68 @@ Function doAction(intAction)
 End Function
 
 '*******************************************************************************
+Function wuDownloadWrapper(objSearchResults)
+
+	Dim downloadResults
+
+	Dim Ex
+	
+	On Error Resume Next
+		If (WUF_ASYNC = 1) Then
+			Set downloadResults = wuDownloadAsync(objSearchResults)
+		Else
+			Set downloadResults = wuDownload(objSearchResults)
+		End If
+	Set Ex = New ErrWrap.catch() 'catch
+	On Error GoTo 0
+	If (Ex.number <> 0) Then
+		call gResWrt.wl( "download.failure!" )
+		If (Ex.number = cLng("&H80240024") ) Then
+			call gResWrt.wal( "download.failure!.reason", Ex.Description )
+		Else 
+			Err.Raise Ex.number, Ex.Source, Ex.Description
+		End If
+		Exit Function
+	End If		
+		
+	call logDownloadResult(objSearchResults.updates, downloadResults)
+	call recordDownloadResult(objSearchResults.updates, downloadResults)
+	
+End Function
+
+'*******************************************************************************
+Function wuInstallWrapper(objSearchResults)
+
+	Dim installResults
+	
+	Dim Ex
+	
+	On Error Resume Next
+		If (WUF_ASYNC = 1) Then
+			Set installResults = wuInstallAsync(objSearchResults)
+		Else
+			Set installResults = wuInstall(objSearchResults)
+		End IF
+	Set Ex = New ErrWrap.catch() 'catch
+	On Error GoTo 0
+	If (Ex.number <> 0) Then
+		call gResWrt.wl( "install.failure!" )
+		If (Ex.number = cLng("&H80240024") ) Then
+			call gResWrt.wal( "install.failure!.reason", Ex.Description )
+		Else 
+			Err.Raise Ex.number, Ex.Source, Ex.Description
+		End If
+		Exit Function
+	End If
+
+	call logInstallationResult(objSearchResults.updates,installResults)
+	call recordInstallationResult(objSearchResults.updates, installResults )
+	
+End Function
+
+'*******************************************************************************
 Function manualAction(intAction)
 	Dim searchResults
-	Dim downloadResults
-	Dim installResults
 	Dim intUpdateCount
 	
 	logDebug("Starting Manual Action.")
@@ -423,22 +482,10 @@ Function manualAction(intAction)
 	If (intUpdateCount > 0) Then
 		acceptEulas(searchResults)
 		If ( (intAction and WUF_ACTION_DOWNLOAD) <> 0 ) Then
-			If (WUF_ASYNC = 1) Then
-				Set downloadResults = wuDownloadAsync(searchResults)
-			Else
-				Set downloadResults = wuDownload(searchResults)
-			End IF
-			call logDownloadResult(searchResults.updates, downloadResults)
-			call recordDownloadResult(searchResults.updates, downloadResults)
+			wuDownloadWrapper(searchResults)
 		End If
 		If ( (intAction and  WUF_ACTION_INSTALL) <> 0 ) Then
-			If (WUF_ASYNC = 1) Then
-				Set installResults = wuInstallAsync(searchResults)
-			Else
-				Set installResults = wuInstall(searchResults)
-			End IF
-			call recordInstallationResult(searchResults.updates, installResults )
-			call logInstallationResult(searchResults.updates,installResults)
+			wuInstallWrapper(searchResults)
 		End If
 	End If
 	
@@ -453,7 +500,7 @@ End Function
 
 '*******************************************************************************
 Function recordSearchResult( objSearchResults )
-	call gResWrt.wal("search.result.count", objSearchResults.Updates.Count)
+	call gResWrt.wal( "search.result.count", objSearchResults.Updates.Count)
 		
 	call gResWrt.wal( "search.result.code", _
 		getOperationResultMsg(objSearchResults.ResultCode) )
@@ -707,7 +754,8 @@ Function getCurrentUpdateDownloadProgress(downloadProgress,updates)
 	Dim dlPct
 	dlPct = dp.CurrentUpdatePercentComplete
 	
-	getCurrentUpdateDownloadProgress = "{" & currentUpdateKb & "-" & dlPhase & "}(" & dlSize & "/" & dlDone & ")[" & dlPct & "]"
+	getCurrentUpdateDownloadProgress = "{" & currentUpdateKb & "-" & _
+		dlPhase & "}(" & dlSize & "/" & dlDone & ")[" & dlPct & "]"
 	
 End Function
 
@@ -763,12 +811,22 @@ Function wuDownloadAsync(objSearchResult)
 		If Ex.number = cLng(&H80240044) Then
 			call logError( "Insufficient access, try running as administrator." )
 			Err.Raise Ex.Number, Ex.Source & "; wuDownloadAsync()", Ex.Description
+		ElseIf Ex.number = cLng(&H80240024) Then
+			Dim strMsg
+			strMsg = " No updates available to download."
+			call logErrorEx( strMsg, Ex )
+			Err.Raise Ex.Number, Ex.Source & "; wuDownloadAsync()", Ex.Description & strMsg
+		Else
+			call logError( "Unknown problem downloading updates.")
+			Err.Raise Ex.Number, Ex.Source & "; wuDownloadAsync()", Ex.Description
 		End If
 	End If
 	
 	Set dlProgress = dlJob.getProgress()
+	
 	gResWrt.wl("")
-	While Not getAsyncWuOpComplete(updates, dlProgress) 
+	
+	While Not getAsyncWuOpComplete(updates, dlProgress)  
 		set dlProgress = dlJob.getProgress()
 		WScript.Sleep(2000)
 		gResWrt.rw("                                                                          ")
@@ -780,9 +838,9 @@ Function wuDownloadAsync(objSearchResult)
 	gResWrt.wl("")
 	
 	If (dlJob.isCompleted = TRUE) Then 
-		logInfo("Asynchronous download call completed." )
+		logInfo("Asynchronous download completed." )
 	Else
-		logError( "Could not complete asynchronous call." )
+		logWarn( "Could not complete asynchronous download, forcing synchronous termination." )
 	End If
 	
 	Set objDownloadResult = downloader.endDownload(dlJob)
@@ -799,12 +857,10 @@ Function wuDownloadAsync(objSearchResult)
 End Function
 
 '*******************************************************************************
-Function wuInstall(objSearchResult)
-	Dim caughtErr
-
-	Dim updatesToInstall
-	Set updatesToInstall = CreateObject("Microsoft.Update.UpdateColl")
+Function countMissingUpdates(objSearchResult)
 	
+	countMissingUpdates = 0
+
 	Dim i
 	For i = 0 To objSearchResult.Updates.Count-1
 		Dim update
@@ -813,9 +869,22 @@ Function wuInstall(objSearchResult)
 			logInfo("Update has been downloaded: " & update.Title )
 			updatesToInstall.Add(update)
 		Else
-			logWarn("Could not complete download of: " & update.Title )
+			logWarn("Update is not downloaded: " & update.Title )
+			countMissingUpdates = countMissingUpdates + 1
 	    End If
 	Next
+	
+End Function
+
+'*******************************************************************************
+Function wuInstall(objSearchResult)
+	Dim caughtErr
+
+	Dim updatesToInstall
+	'Set updatesToInstall = CreateObject("Microsoft.Update.UpdateColl")
+	Set updatesToInstall = objSearchResult.Updates
+	
+	countMissingUpdates(objSearchResult)
 	
 	logDebug("Creating Update Installer.")
 	Dim installer
@@ -839,7 +908,7 @@ Function wuInstall(objSearchResult)
 		Set installationResult = installer.Install()
 	Set caughtErr = New ErrWrap.catch() 'catch
 	On Error GoTo 0	
-	If (caughtErr.number <> 0) then
+	If (caughtErr.number <> 0) Then
 		If (err.number = cLng(&H80240024)) then
 			logInfo( "No updates to install." )
 		Else
@@ -863,21 +932,15 @@ Function wuInstallAsync(objSearchResult)
 	Dim objInstallResult
 
 	Dim updatesToInstall
-	Set updatesToInstall = CreateObject("Microsoft.Update.UpdateColl")
+	'Set updatesToInstall = CreateObject("Microsoft.Update.UpdateColl")
+	Set updatesToInstall = objSearchResult.Updates
 	
-	Dim i
-	For i = 0 To objSearchResult.Updates.Count-1
-		Dim update
-	    Set update = objSearchResult.Updates.Item(i)
-	    If (update.IsDownloaded) Then
-			logInfo("Update has been downloaded: " & update.Title )
-			updatesToInstall.Add(update)
-		Else
-			logWarn("Could not complete download of: " & update.Title )
-	    End If
-	Next
+	countMissingUpdates(objSearchResult)
 	
-	logDebug("Creating Update Installer.")
+	logInfo ( "Number of updates to be installed that are downloaded: " & updatesToInstall.count )
+
+	logDebug( "Creating Update Installer." )
+	
 	Dim installer
 	Set installer = gObjUpdateSession.CreateUpdateInstaller()
 	installer.AllowSourcePrompts = False
@@ -894,22 +957,45 @@ Function wuInstallAsync(objSearchResult)
 	
 	logInfo("Installing updates.")
 	
-	Set installJob = installer.beginInstall(gObjDummyDict.Item("DummyFunction"),gObjDummyDict.Item("DummyFunction"),vbNull)
+	Dim Ex
+	On Error Resume Next
+		Set installJob = installer.beginInstall(gObjDummyDict.Item("DummyFunction"),gObjDummyDict.Item("DummyFunction"),vbNull)
+	Set Ex = New ErrWrap.catch() 'catch
+	On Error GoTo 0
+	If (Ex.number <> 0) Then
+		If Ex.number = cLng(&H80240044) Then
+			call logError( "Insufficient access, try running as administrator." )
+			Err.Raise Ex.Number, Ex.Source & "; wuInstallAsync()", Ex.Description
+		ElseIf Ex.number = cLng(&H80240024) Then
+			Dim strMsg
+			strMsg = " No updates available to install."
+			call logErrorEx( strMsg, Ex )
+			Err.Raise Ex.Number, Ex.Source & "; wuInstallAsync()", Ex.Description & strMsg
+		Else
+			call logError( "Unknown problem installing updates.")
+			Err.Raise Ex.Number, Ex.Source & "; wuInstallAsync()", Ex.Description
+		End If
+	End If
+	
 	set installProgress = installJob.getProgress()
 	
-	gResWrt.rl("")
+	gResWrt.wl("")
+	
 	While Not getAsyncWuOpComplete(installer.Updates, installProgress) 
 		set installProgress = installJob.getProgress()
 		WScript.Sleep(5000)
 		gResWrt.rw("                                                                          ")
-		gResWrt.rw( "install.status" & getTotalUpdateInstallProgress(installProgress,updates) & _
-			";" & getCurrentUpdateInstallProgress(installProgress,updates) )
+		gResWrt.rw( "install.status" & getTotalUpdateInstallProgress(installProgress,updatesToInstall) & _
+			";" & getCurrentUpdateInstallProgress(installProgress,updatesToInstall) )
 		logInfo( "Install Progress: " & installProgress.percentcomplete & "%" )
 	Wend
+	
+	gResWrt.wl("")
+	
 	If (installJob.isCompleted = TRUE) Then 
-		logInfo("Asynchronous install call completed." )
+		logInfo("Asynchronous installation completed." )
 	Else
-		logError( "Could not complete asynchronous call." )
+		logWarn( "Could not complete asynchronous install, forcing synchronous completion." )
 	End If
 	
 	Set objInstallResult = installer.endInstall(installJob)
@@ -926,16 +1012,16 @@ Function wuInstallAsync(objSearchResult)
 End Function
 
 '*******************************************************************************
+' The only reason this is used is because the IDownloadJob::isCompleted
+' and IInstallJob::isCompleted never return true in rare situations,
+' so they cannot be relied on for action completion.
 Function getAsyncWuOpComplete(objUpdates, objOperationProgress)
-	WScript.echo "Checking async op complete."
+
 	Dim i, intTotalResultCode
 	intTotalResultCode = 15
 	
 	For i = 0 To objUpdates.count - 1
-		WScript.echo "Checking [" & i & "] op: rescode=" & objOperationProgress.getUpdateResult(i).resultCode
-		WScript.echo "Total Result code before " & intTotalResultCode
 		intTotalResultCode = intTotalResultCode AND objOperationProgress.getUpdateResult(i).resultCode
-		WScript.echo "Total Result code after " & intTotalResultCode
 	Next
 	
 	If (intTotalResultCode = 0) Then
