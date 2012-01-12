@@ -19,7 +19,7 @@ Option Explicit
 'Settings------------------------------
 Const LOG_LEVEL = 3
 Const VERBOSE_LEVEL = 2
-Const WUF_CATCH_ALL_EXCEPTIONS = 1
+Const WUF_CATCH_ALL_EXCEPTIONS = 0
 Const WUF_ASYNC = 1
 Const WUF_SHUTDOWN_DELAY = 60
 '--------------------------------------
@@ -776,15 +776,12 @@ Function getCurrentUpdateInstallProgress(InstallProgress,updates)
 	'There is almost always just one KB
 	currentUpdateKb = currentUpdate.KBArticleIDs.Item(0) 
 	
-	
 	Dim ipPct
 	ipPct = ip.CurrentUpdatePercentComplete
 	
 	getCurrentUpdateInstallProgress = "{" & currentUpdateKb & "}[" & ipPct & "]"
 	
 End Function
-
-
 
 '*******************************************************************************
 Function wuDownloadAsync(objSearchResult)
@@ -867,13 +864,24 @@ Function countMissingUpdates(objSearchResult)
 	    Set update = objSearchResult.Updates.Item(i)
 	    If (update.IsDownloaded) Then
 			logInfo("Update has been downloaded: " & update.Title )
-			updatesToInstall.Add(update)
 		Else
 			logWarn("Update is not downloaded: " & update.Title )
 			countMissingUpdates = countMissingUpdates + 1
 	    End If
 	Next
 	
+End Function
+
+'*******************************************************************************
+Function forceInstallerQuiet(objInstaller)
+	Dim caughtErr
+	On Error Resume Next
+		installer.ForceQuiet = True 
+	Set caughtErr = New ErrWrap.catch() 'catch
+	On Error GoTo 0
+	If (caughtErr.number <> 0) Then
+		call logErrorEx("Could not force installer to be quiet.", Err)
+	End If
 End Function
 
 '*******************************************************************************
@@ -884,20 +892,15 @@ Function wuInstall(objSearchResult)
 	'Set updatesToInstall = CreateObject("Microsoft.Update.UpdateColl")
 	Set updatesToInstall = objSearchResult.Updates
 	
-	countMissingUpdates(objSearchResult)
+	call gResWrt.wal("install.pre.dls.missing", countMissingUpdates(objSearchResult) )
 	
 	logDebug("Creating Update Installer.")
+	
 	Dim installer
 	Set installer = gObjUpdateSession.CreateUpdateInstaller()
 	installer.AllowSourcePrompts = False
 
-	On Error Resume Next
-		installer.ForceQuiet = True 
-	Set caughtErr = New ErrWrap.catch() 'catch
-	On Error GoTo 0
-	If (caughtErr.number <> 0) Then
-		call logErrorEx("Could not force installer to be quiet.", Err)
-	End If
+	forceInstallerQuiet(installer)
 	
 	installer.Updates = updatesToInstall
 	
@@ -935,8 +938,8 @@ Function wuInstallAsync(objSearchResult)
 	'Set updatesToInstall = CreateObject("Microsoft.Update.UpdateColl")
 	Set updatesToInstall = objSearchResult.Updates
 	
-	countMissingUpdates(objSearchResult)
-	
+	call gResWrt.wal("install.pre.dls.missing", countMissingUpdates(objSearchResult) )
+		
 	logInfo ( "Number of updates to be installed that are downloaded: " & updatesToInstall.count )
 
 	logDebug( "Creating Update Installer." )
@@ -945,13 +948,7 @@ Function wuInstallAsync(objSearchResult)
 	Set installer = gObjUpdateSession.CreateUpdateInstaller()
 	installer.AllowSourcePrompts = False
 
-	On Error Resume Next
-		installer.ForceQuiet = True 
-	Set caughtErr = New ErrWrap.catch() 'catch
-	On Error GoTo 0
-	If (caughtErr.number <> 0) Then
-		call logErrorEx("Could not force installer to be quiet.", Err)
-	End If
+	forceInstallerQuiet(installer)
 	
 	installer.Updates = updatesToInstall
 	
@@ -1755,7 +1752,7 @@ Class ResultWriter
 	Private Function reWrite(strMessage)
 		stdOut.write chr(13) & strMessage
 		If Not (booConsoleOnly) Then
-			fRes.writeLine(format(strMessage))
+			fRes.write(chr(13) & strMessage)
 		End If
 	End Function
 	
