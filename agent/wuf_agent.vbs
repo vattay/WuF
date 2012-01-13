@@ -16,6 +16,10 @@ Option Explicit
 'You should have received a copy of the GNU General Public License
 'along with this program.  If not, see <http://www.gnu.org/licenses/>.
 '*******************************************************************************
+
+'@TODO: Add feedback file name generation, format name-s#-d#-i#-r?.txt
+'Create Result Transmitter class to handle this.
+
 'Settings------------------------------
 Const LOG_LEVEL = 3
 Const VERBOSE_LEVEL = 2
@@ -68,12 +72,7 @@ Const WUF_DEFAULT_FORCE_SHUTDOWN_ACTION = false
 Const WUF_DEFAULT_ACTION = 1 
 Const WUF_DEFAULT_SHUTDOWN_OPTION = 0
 
-Const WUF_DEFAULT_LOG_LOCATION = "wufa_local"
-Const WUF_DEFAULT_RESULT_LOCATION = "wufa_local_result" 
-
-Const WUF_DEFAULT_RESULT_DROPBOX = "c:\temp\wuf_dropbox"
-Const WUF_DEFAULT_LOG_DROP_NAME = "wufa_drop_localhost.log"
-Const WUF_DEFAULT_RESULT_DROP_NAME = "wufa_drop_result_localhost.txt"
+Const WUF_DEFAULT_LOG_LOCATION = "local_wufa"
 
 Const WUF_USAGE = "wuf_agent.vbs [/aA | /aS | /aD | /aI] [/sN | /sR | /sH] [/fS] [/oN:<name>] [/d:<unc_path>] [/n:<result_name>]"
 
@@ -82,7 +81,6 @@ Dim stdErr, stdOut	'std stream access
 Dim gWshShell		'Shell access
 Dim gWshSysEnv		'Env access
 Dim gLogLocation	'Log location
-Dim gResultLocation	'Result location
 Dim gAction			'This applications action
 Dim gShutdownOption	'Restart, shutdown, or do nothing
 Dim gForceShutdown	'Do the shutdown option even if not required
@@ -160,15 +158,13 @@ Function initialize()
 	Call gObjDummyDict.Add("DummyFunction", New DummyClass)
 	
 	gLogLocation = WUF_DEFAULT_LOG_LOCATION & "_" & gRunId & ".log"
-	gResultLocation = WUF_DEFAULT_RESULT_LOCATION  & "_" & gRunId & ".txt"
 	gResWrt = NULL
 	gAction = WUF_ACTION_UNDEFINED
 	gShutdownOption = WUF_DEFAULT_SHUTDOWN_OPTION
 	gForceShutdown = WUF_DEFAULT_FORCE_SHUTDOWN_ACTION
-	gDropBox = WUF_DEFAULT_RESULT_DROPBOX
+	gDropBox = ""
 	gResultDropName = ""
 	gUseDropBox = false
-
 
 End Function
 
@@ -263,9 +259,9 @@ Function parseArgs()
 					booResultFileFlag = true
 				End If
 			ElseIf ( strComp(arg,"d") = 0 ) Then
+				gUseDropBox = true
 				gDropBox = Wscript.Arguments.Named("d")
 			ElseIf ( strComp(arg,"n") = 0 ) Then
-				gUseDropBox = true
 				gResultDropName = Wscript.Arguments.Named("n")
 			Else
 				success = false
@@ -340,7 +336,6 @@ Function parseOutputOption(strArgVal)
 		Else
 			Set gResWrt = New ResultWriter.init(strResultLocation,VERBOSE_LEVEL)
 		End If
-		gResultLocation = Wscript.Arguments.Named(strArgVal) '@@REMOVE
 	Else
 		parseOutputOption = False
 	End If
@@ -828,7 +823,7 @@ Function wuDownloadAsync(objSearchResult)
 		WScript.Sleep(2000)
 		gResWrt.rw("                                                                          ")
 		gResWrt.rw( "download.status" & getTotalUpdateDownloadProgress(dlProgress,updates) & _
-			";" & getCurrentUpdateDownloadProgress(dlProgress,updates) )
+			":" & getCurrentUpdateDownloadProgress(dlProgress,updates) )
 		logInfo( "Download Progress: " & dlProgress.percentcomplete & "%" )
 	Wend
 	
@@ -983,7 +978,7 @@ Function wuInstallAsync(objSearchResult)
 		WScript.Sleep(5000)
 		gResWrt.rw("                                                                          ")
 		gResWrt.rw( "install.status" & getTotalUpdateInstallProgress(installProgress,updatesToInstall) & _
-			";" & getCurrentUpdateInstallProgress(installProgress,updatesToInstall) )
+			":" & getCurrentUpdateInstallProgress(installProgress,updatesToInstall) )
 		logInfo( "Install Progress: " & installProgress.percentcomplete & "%" )
 	Wend
 	
@@ -1690,6 +1685,7 @@ Function genResultFileName()
 End Function
 
 '===============================================================================
+'===============================================================================
 Class ResultWriter
 	Dim intVerbosity
 	Dim strLocation
@@ -1751,9 +1747,6 @@ Class ResultWriter
 	
 	Private Function reWrite(strMessage)
 		stdOut.write chr(13) & strMessage
-		If Not (booConsoleOnly) Then
-			fRes.write(chr(13) & strMessage)
-		End If
 	End Function
 	
 	Private Function write(strMessage)
@@ -1771,7 +1764,7 @@ Class ResultWriter
 		call writeLine(strMessage)
 	End Function
 	
-	Function rw(strMessage) 're write
+	Function rw(strMessage) 're write to console only
 		call reWrite(strMessage)
 	End Function
 	
@@ -1802,6 +1795,7 @@ Class ResultWriter
 	End Sub
 End Class
 
+'===============================================================================
 '===============================================================================
 ' Error Handling ---------------------------------------------------------------
 ' This section supports try-catch&throw functionality in vbscript.
