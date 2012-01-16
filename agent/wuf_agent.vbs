@@ -1752,19 +1752,9 @@ Class ResultWriter
 	
 	'Custom Constructor - Generate filename
 	Function initG(intVerbosity)
-		Set stdOut = WScript.StdOut
-		Set stdErr = Wscript.StdErr
+	
+		Set initG = init(genRunId, intVerbosity)
 		
-		Dim fso
-		Set fso = CreateObject("Scripting.FileSystemObject")
-		
-		Dim strResultLocation
-		strResultLocation = genRunId()
-		
-		strLocation = strResultLocation
-
-		Set fRes = fso.createTextFile( strResultLocation, True )
-		Set initG = Me
 	End Function
 	
 	Private Function format(str)
