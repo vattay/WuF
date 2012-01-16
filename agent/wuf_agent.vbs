@@ -117,7 +117,11 @@ Function main()
 		Set Ex = New ErrWrap.catch() 'catch
 		On Error GoTo 0
 		If (Ex.number <> 0) Then
-			call logErrorEx("Unexpected exception.", Ex)
+			If Ex.number = cLng(&H80240044) Then
+				call logErrorEx( "Insufficient access, try running as administrator.", Ex )
+			Else
+				call logErrorEx( "Unexpected exception.", Ex)
+			End If
 		End If
 	Else
 		core()
@@ -800,10 +804,7 @@ Function wuDownloadAsync(objSearchResult)
 	Set Ex = New ErrWrap.catch() 'catch
 	On Error GoTo 0
 	If (Ex.number <> 0) Then
-		If Ex.number = cLng(&H80240044) Then
-			call logError( "Insufficient access, try running as administrator." )
-			Err.Raise Ex.Number, Ex.Source & "; wuDownloadAsync()", Ex.Description
-		ElseIf Ex.number = cLng(&H80240024) Then
+		If Ex.number = cLng(&H80240024) Then
 			Dim strMsg
 			strMsg = " No updates available to download."
 			call logErrorEx( strMsg, Ex )
@@ -955,10 +956,7 @@ Function wuInstallAsync(objSearchResult)
 	Set Ex = New ErrWrap.catch() 'catch
 	On Error GoTo 0
 	If (Ex.number <> 0) Then
-		If Ex.number = cLng(&H80240044) Then
-			call logError( "Insufficient access, try running as administrator." )
-			Err.Raise Ex.Number, Ex.Source & "; wuInstallAsync()", Ex.Description
-		ElseIf Ex.number = cLng(&H80240024) Then
+		If Ex.number = cLng(&H80240024) Then
 			Dim strMsg
 			strMsg = " No updates available to install."
 			call logErrorEx( strMsg, Ex )
@@ -1680,9 +1678,44 @@ Function rebootPlanned()
 		OR ( gForceShutdown ) )
 End Function
 
+'*******************************************************************************
 Function genResultFileName()
 	genResultFileName = genRunId & ".txt"
 End Function
+
+'===============================================================================
+'===============================================================================
+Class BinarySemaphore
+	Dim strLockFileLocation
+	Dim objLockFile
+	
+	Function init(strLockFileLocation)
+		Me.strLockFileLocation = strLockFileLocation
+		Set init = Me
+	End Function
+	
+	Function release()
+		
+		Dim fso
+		Set fso = CreateObject("Scripting.FileSystemObject")
+		
+		objLockFile.close()
+		
+	End Function
+	
+	Function acquire()
+	
+		Dim fso
+		Set fso = CreateObject("Scripting.FileSystemObject")
+		Set objLockFile = fso.createTextFile( strLockFileLocation, False )
+		
+	End Function
+	
+	Sub Class_Terminate()
+		release()
+	End Sub
+	
+End Class
 
 '===============================================================================
 '===============================================================================
@@ -1713,7 +1746,7 @@ Class ResultWriter
 		Dim fso
 		Set fso = CreateObject("Scripting.FileSystemObject")
 
-		Set fRes = fso.createTextFile( strResultLocation, True, -2 )
+		Set fRes = fso.createTextFile( strResultLocation, True )
 		Set init = Me
 	End Function
 	
@@ -1730,7 +1763,7 @@ Class ResultWriter
 		
 		strLocation = strResultLocation
 
-		Set fRes = fso.createTextFile( strResultLocation, True, -2 )
+		Set fRes = fso.createTextFile( strResultLocation, True )
 		Set initG = Me
 	End Function
 	
