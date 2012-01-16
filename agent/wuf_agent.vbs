@@ -54,10 +54,11 @@ Const WSUS_REG_KEY_TARGET_GROUP = "TargetGroup"
 Const WUF_INPUT_ERROR = 10001
 Const WUF_FEEDBACK_ERROR = 10002
 Const WUF_NO_UPDATES = 10003
+Const WUF_INVALID_CONFIGURATION = 10004
 
 Const WUF_ACTION_UNDEFINED = 0
 Const WUF_ACTION_AUTO = 	1
-Const WUF_ACTION_SCAN = 	2
+Const WUF_ACTION_SEARCH = 	2
 Const WUF_ACTION_DOWNLOAD = 4
 Const WUF_ACTION_INSTALL = 	8
 
@@ -74,7 +75,7 @@ Const WUF_DEFAULT_SHUTDOWN_OPTION = 0
 
 Const WUF_DEFAULT_LOG_LOCATION = "local_wufa"
 
-Const WUF_USAGE = "wuf_agent.vbs [/aA | /aS | /aD | /aI] [/sN | /sR | /sH] [/fS] [/oN:<name>] [/d:<unc_path>] [/n:<result_name>]"
+Const WUF_USAGE = "wuf_agent.vbs [/aA | /aS | /aD | /aI] [/sN | /sR | /sH] [/fS] [/oN:<location_name>]"
 
 'Globals - avoid modification after initialize()
 Dim stdErr, stdOut	'std stream access
@@ -85,13 +86,10 @@ Dim gAction			'This applications action
 Dim gShutdownOption	'Restart, shutdown, or do nothing
 Dim gForceShutdown	'Do the shutdown option even if not required
 Dim gFileLog 		'Wuf Agent Log object
-Dim gDropBox		'Where results are sent after completion
-Dim gResultDropName	'Name of result file sent to dropbox
 Dim gRunId			'Unique id of run
 Dim gObjUpdateSession 'The windows update session used for all wu operations
 Dim gObjDummyDict	'Used for async wu operations
 Dim gResWrt	'Object that takes care of result writing
-Dim gUseDropBox
 
 Class DummyClass 'set up dummy class for async download and installation calls
 	Public Default Function DummyFunction()
@@ -138,9 +136,6 @@ Function core()
 			preAction()
 			doAction(gAction)
 			postAction()
-			If (gUseDropBox) Then
-				feedBack()
-			End If
 		End If
 	End If
 	cleanup()
@@ -166,9 +161,6 @@ Function initialize()
 	gAction = WUF_ACTION_UNDEFINED
 	gShutdownOption = WUF_DEFAULT_SHUTDOWN_OPTION
 	gForceShutdown = WUF_DEFAULT_FORCE_SHUTDOWN_ACTION
-	gDropBox = ""
-	gResultDropName = ""
-	gUseDropBox = false
 
 End Function
 
@@ -198,9 +190,12 @@ Function configure()
 			configure = false
 			Exit Function
 		Else
-			call logErrorEx("Unknown error during configuration.", Ex)
+			Dim strMessage
+			strMessage = "Unexpected exception during configuration."
+			call logErrorEx(strMessage, Ex)
 			configure = false
-			Exit Function
+			Err.Raise Ex.number, Ex.source & "; configure()", Ex.description & "; " &_
+				strMessage
 		End If
 	End If
 	
@@ -209,9 +204,6 @@ Function configure()
 	
 	logDebug("Creating Update Session.")
 	Set gObjUpdateSession = CreateObject("Microsoft.Update.Session")
-	
-	logInfo( "DropBox: " & gDropBox)
-	logInfo( "Result Drop Filename: " & gResultDropName)
 	
 End Function
 
@@ -262,18 +254,13 @@ Function parseArgs()
 				Else
 					booResultFileFlag = true
 				End If
-			ElseIf ( strComp(arg,"d") = 0 ) Then
-				gUseDropBox = true
-				gDropBox = Wscript.Arguments.Named("d")
-			ElseIf ( strComp(arg,"n") = 0 ) Then
-				gResultDropName = Wscript.Arguments.Named("n")
 			Else
 				success = false
 				Err.Raise WUF_INPUT_ERROR, "Wuf.parseArgs()", "Unknown named argument: " & arg	
 			End If
 		Next
 		If Not (booResultFileFlag) Then
-			Set gResWrt = New ResultWriter.initCon(VERBOSE_LEVEL)
+			Set gResWrt = New ResultWriter.initCon()
 		End If
 		For Each arg in objUnnamedArgs
 			success = false
@@ -284,6 +271,8 @@ Function parseArgs()
 		success = false
 		Err.Raise WUF_INPUT_ERROR, "Wuf.parseArgs()", "No arguments."	
 	End If
+	
+	checkConfig()
 End Function
 
 '*******************************************************************************
@@ -292,7 +281,7 @@ Function parseAction(strArgVal) 'return boolean
 	If ( strCompI(strArgVal,"aA") ) Then
 		gAction = gAction or WUF_ACTION_AUTO
 	ElseIf ( strCompI(strArgVal,"aS") ) Then
-		gAction = gAction or WUF_ACTION_SCAN
+		gAction = gAction or WUF_ACTION_SEARCH
 	ElseIf ( strCompI(strArgVal,"aD") ) Then
 		gAction = gAction or WUF_ACTION_DOWNLOAD
 	ElseIf ( strCompI(strArgVal,"aI") ) Then
@@ -336,13 +325,28 @@ Function parseOutputOption(strArgVal)
 		Dim strResultLocation
 		strResultLocation = Wscript.Arguments.Named(strArgVal)
 		If strResultLocation = "" Then
-			Set gResWrt = New ResultWriter.initG(VERBOSE_LEVEL)
+			Set gResWrt = New ResultWriter.initG()
 		Else
-			Set gResWrt = New ResultWriter.init(strResultLocation,VERBOSE_LEVEL)
+			Set gResWrt = New ResultWriter.init(strResultLocation)
 		End If
 	Else
 		parseOutputOption = False
 	End If
+End Function
+
+'*******************************************************************************
+Function checkConfig()
+
+	If ( (gAction and WUF_ACTION_AUTO) <> 0 )  Then
+		If ( (gAction and  WUF_ACTION_SEARCH) <> 0 ) OR _
+			( (gAction and  WUF_ACTION_DOWNLOAD) <> 0 ) OR _
+			( (gAction and  WUF_ACTION_INSTALL) <> 0 ) Then
+			
+			Err.Raise WUF_INVALID_CONFIGURATION, "checkConfig", "aA cannot be used with other actions"
+
+		End If	
+	End IF
+
 End Function
 
 '*******************************************************************************
@@ -398,7 +402,7 @@ Function doAction(intAction)
 	If ((intAction and WUF_ACTION_AUTO) <> 0) Then
 		autoDetect()
 	Else
-		Set objUpdateResults = manualAction(intAction)
+		call manualAction(intAction)
 	End If
 	
 	logInfo("Action Complete.")
@@ -472,14 +476,18 @@ Function manualAction(intAction)
 	
 	logDebug("Starting Manual Action.")
 	
-	Set searchResults = wuSearch( WUF_DEFAULT_SEARCH_FILTER )
-	intUpdateCount = searchResults.Updates.Count
+	intUpdateCount = 0
 	
-	logSearchResult( searchResults )
-	recordSearchResult( searchResults )
+	If ( (intAction and WUF_ACTION_SEARCH) <> 0 ) Then
+		Set searchResults = wuSearch( WUF_DEFAULT_SEARCH_FILTER )
+		intUpdateCount = searchResults.Updates.Count
+		
+		logSearchResult( searchResults )
+		recordSearchResult( searchResults )
+	End If
 	
 	If (intUpdateCount > 0) Then
-		acceptEulas(searchResults)
+		acceptEulas(searchResults) 'is this needed for downloads?
 		If ( (intAction and WUF_ACTION_DOWNLOAD) <> 0 ) Then
 			wuDownloadWrapper(searchResults)
 		End If
@@ -489,7 +497,7 @@ Function manualAction(intAction)
 	End If
 	
 	logDebug("Manual Action completed.")
-	Set manualAction = searchResults
+	
 End Function
 
 '*******************************************************************************
@@ -595,13 +603,6 @@ Function postAction()
 	End If
 	recordPostResult()
 	logInfo("Completed post-actions")
-End Function
-
-'*******************************************************************************
-Function feedBack()
-	If gResWrt.isUsingFile() And gUseDropBox Then
-		call sendResults()
-	End If
 End Function
 
 '*******************************************************************************
@@ -1165,15 +1166,7 @@ Function checkUpdateAgent() 'returns boolean (true if version is ok)
 End Function
 
 '*******************************************************************************
-Function sendResults()
-	logDebug("Attempting to send results")
-	Dim strFileName
-	strFileName = gResultDropName
-	call sendFile(gResWrt.getLocation(), gDropBox, strFileName )
-End Function
-
-'*******************************************************************************
-Function sendFile(strSourceLocation, strDestFolder, strDestFileName)
+Function sendFile(strSourceLocation, strDestLocation)
 	Dim objFSO, objDestFile
 	Dim strPath, strFullName
 	Dim objFolder
@@ -1188,13 +1181,11 @@ Function sendFile(strSourceLocation, strDestFolder, strDestFileName)
 	Set objSourceFile = objFSO.OpenTextFile (strSourceLocation, FORREADING, False, -2)
 	
 	Dim Ex
-	
 	On Error Resume Next' try
 		strMessage = objSourceFile.readAll 
 	Set Ex = New ErrWrap.catch() 'catch
 	On Error GoTo 0
 	If (Ex.number <> 0) Then
-		
 		strMsg = "Unable to read local file for sending to dropbox: " & strSourceLocation
 		If (Ex.number = 62) Then
 			call logWarnEx(strMsg, Ex)
@@ -1205,33 +1196,16 @@ Function sendFile(strSourceLocation, strDestFolder, strDestFileName)
 	End If
 	'End try-catch
 	
-	If Not objFSO.FolderExists(strDestFolder) Then
-		On Error Resume Next 'try
-			Set objFolder = objFSO.CreateFolder(strDestFolder)
-		Set Ex = New ErrWrap.catch() 'catch
-		On Error GoTo 0
-		If (Ex.number <> 0) Then
-			strMsg = "Drop box did not exist and could not be created: " & strDestFolder
-			call logErrorEx( strMsg, Ex )
-			Err.Raise Ex.number,  Ex.Source & "; sendFile()", Ex.Description & "; " & strMsg
-		End If
-		'End try-catch
-	End If
-
-	strPath = strDestFolder
-	strFullName = objFSO.BuildPath(strPath, strDestFileName)
-	
 	On Error Resume Next 'try
-		Set objDestFile = objFSO.OpenTextFile(strFullName,FORWRITING,True)
+		Set objDestFile = objFSO.OpenTextFile(strDestLocation,FORWRITING,True)
 	Set Ex = New ErrWrap.catch() 'catch
 	On Error GoTo 0
 	If (Ex.number <> 0) Then
-		strMsg = "Could not write file to dropbox: " & strDestFolder
-		call logErrorEx( strMsg, Ex )
+		strMsg = "Could not open destination file: " & strDestLocation
 		Err.Raise Ex.number,  Ex.Source & "; sendFile()", Ex.Description & "; " & strMsg
 	End If
 	
-	objDestFile.writeLine(strMessage)
+	objDestFile.write(strMessage)
 	objDestFile.close
 	objSourceFile.close
 	sendFile = true
@@ -1253,22 +1227,13 @@ End Function
 '*******************************************************************************
 Function getTimeStamp()
 	Dim someTime
-	someTime = TimeValue(Now())
-	someTime = Replace(someTime,":","")
-	someTime = Replace(someTime," ","")
-	getTimeStamp = someTime
-End Function
-
-'*******************************************************************************
-Function getTimeStamp2()
-	Dim someTime
 	Dim sec, min, hr
 	
 	sec = right("0" & second(time),2)
 	min = right("0" & minute(time),2)
 	hr = right("0" & hour(time),2)
 	someTime = hr & min & sec
-	getTimeStamp2 = someTime
+	getTimeStamp = someTime
 End Function
 
 '*******************************************************************************
@@ -1277,15 +1242,16 @@ Function shutDownActionDelay(intAction, intDelay)
 	Dim strShutDown
 	Dim objShell
 	
-	If (intAction = WUF_SHUTDOWN_RESTART) Then
-		strShutdown = "shutdown.exe /r /t " & intDelay & " /f"
-	ElseIf	(intAction = WUF_SHUTDOWN_SHUTDOWN) Then
-		strShutdown = "shutdown.exe /s /t " & intDelay & " /f"
-	End If
-	
 	Set objShell = CreateObject("WScript.Shell")
 	
-	objShell.Run strShutdown, 0, FALSE
+	If (intAction = WUF_SHUTDOWN_RESTART) Then
+		strShutdown = "shutdown.exe /r /t " & intDelay & " /f"
+		objShell.Run strShutdown, 0, FALSE
+	ElseIf	(intAction = WUF_SHUTDOWN_SHUTDOWN) Then
+		strShutdown = "shutdown.exe /s /t " & intDelay & " /f"
+		objShell.Run strShutdown, 0, FALSE
+	End If
+	
 End Function
 
 '*******************************************************************************
@@ -1505,7 +1471,7 @@ Function getActionMessage(intAction)
 	If ( (intAction and WUF_ACTION_AUTO) <> 0 ) Then
 		getActionMessage = getActionMessage & "Auto "
 	End If
-	If ( (intAction and  WUF_ACTION_SCAN) <> 0 ) Then
+	If ( (intAction and  WUF_ACTION_SEARCH) <> 0 ) Then
 		getActionMessage = getActionMessage & "Scan "
 	End If
 	If ( (intAction and  WUF_ACTION_DOWNLOAD) <> 0 ) Then
@@ -1663,7 +1629,7 @@ End Function
 
 '*******************************************************************************
 Function genRunId()
-	genRunId =  getComputerName() & "_" & getDateStamp() & "_" & getTimeStamp2() & "_" & genRandId(100)
+	genRunId =  getComputerName() & "_" & getDateStamp() & "_" & getTimeStamp() & "_" & genRandId(100)
 End Function
 
 '*******************************************************************************
@@ -1685,51 +1651,20 @@ End Function
 
 '===============================================================================
 '===============================================================================
-Class BinarySemaphore
-	Dim strLockFileLocation
-	Dim objLockFile
-	
-	Function init(strLockFileLocation)
-		Me.strLockFileLocation = strLockFileLocation
-		Set init = Me
-	End Function
-	
-	Function release()
-		
-		Dim fso
-		Set fso = CreateObject("Scripting.FileSystemObject")
-		
-		objLockFile.close()
-		
-	End Function
-	
-	Function acquire()
-	
-		Dim fso
-		Set fso = CreateObject("Scripting.FileSystemObject")
-		Set objLockFile = fso.createTextFile( strLockFileLocation, False )
-		
-	End Function
-	
-	Sub Class_Terminate()
-		release()
-	End Sub
-	
-End Class
-
-'===============================================================================
-'===============================================================================
 Class ResultWriter
-	Dim intVerbosity
-	Dim strLocation
+	Dim strResultLocation
+	Dim strShadowLocation
 	Dim fRes
+	Dim fShadow
 	Dim stdOut
 	Dim stdErr
 	Dim booConsoleOnly
+	Dim fso
 	
 	'Custom Constructor - Console Only
-	Function initCon(intVerbosity)
+	Function initCon()
 		booConsoleOnly = true
+		
 		Set stdOut = WScript.StdOut
 		Set stdErr = Wscript.StdErr
 		
@@ -1737,24 +1672,57 @@ Class ResultWriter
 	End Function
 	
 	'Custom Constructor - Take filename
-	Function init(strResultLocation, intVerbosity)
-		Set stdOut = WScript.StdOut
-		Set stdErr = Wscript.StdErr
+	Function init(strResultLocation)
+	
+		Dim strShadowLocation
 		
-		strLocation = strResultLocation
+		Dim wshShell
 		
-		Dim fso
-		Set fso = CreateObject("Scripting.FileSystemObject")
+		Set wshShell = CreateObject("WScript.shell")
+		
+		Dim tempDir 
+		
+		tempDir = wshShell.ExpandEnvironmentStrings("%temp%")
+		
+		strShadowLocation = tempDir & "\" & genRunId & ".tmp"
 
-		Set fRes = fso.createTextFile( strResultLocation, True )
-		Set init = Me
+		Set init = initCore(strResultLocation, strShadowLocation)
+		
 	End Function
 	
 	'Custom Constructor - Generate filename
-	Function initG(intVerbosity)
+	Function initG()
 	
-		Set initG = init(genRunId, intVerbosity)
+		Set initG = init(genRunId & ".csv")
 		
+	End Function
+	
+	Private Function initCore(strResultLocation, strShadowLocation)
+		Set stdOut = WScript.StdOut
+		Set stdErr = Wscript.StdErr
+		
+		Me.strResultLocation = strResultLocation
+		Me.strShadowLocation = strShadowLocation
+		
+		Set fso = CreateObject("Scripting.FileSystemObject")
+		
+		Set fShadow = tryCreateResultFile(strShadowLocation)
+		Set fRes = tryCreateResultFile(strResultLocation)
+		
+		Set initCore = Me
+	End Function
+	
+	Function tryCreateResultFile(strResultLocation)
+		Dim Ex
+		On Error Resume Next
+			Set tryCreateResultFile = fso.createTextFile( strResultLocation, True )
+		Set Ex = New ErrWrap.catch() 'catch
+		On Error GoTo 0
+		If (Ex.number <> 0) Then
+			Err.Raise Ex.number, Ex.Source & _
+				"; ResultWriter.tryCreateResultFile()", _
+				Ex.Description & "; Unable to write to file: " & strResultLocation
+		End If
 	End Function
 	
 	Private Function format(str)
@@ -1764,6 +1732,7 @@ Class ResultWriter
 	Private Function writeLine(strMessage)
 		stdOut.writeLine strMessage
 		If Not (booConsoleOnly) Then
+			fShadow.writeLine(format(strMessage))
 			fRes.writeLine(format(strMessage))
 		End If
 	End Function
@@ -1775,6 +1744,7 @@ Class ResultWriter
 	Private Function write(strMessage)
 		stdOut.write strMessage
 		If Not (booConsoleOnly) Then
+			fShadow.writeLine(format(strMessage))
 			fRes.writeLine(format(strMessage))
 		End If
 	End Function
@@ -1795,25 +1765,31 @@ Class ResultWriter
 		call writeLine(strAttribute & ":" & strValue)
 	End Function
 	
-	Function writeLineVerbose(strMessage)
-		If intVerbosity >= VERBOSE_LEVEL_LOW Then writeLine(strMessage) 
-	End Function
-	
-	Function writeLineVeryVerbose(strMessage)
-		If intVerbosity >= VERBOSE_LEVEL_HIGH Then writeLine(strMessage)
-	End Function
-	
 	Function getLocation()
-		getLocation = strLocation
+		getLocation = strResultLocation
 	End Function
 	
 	Function isUsingFile()
 		isUsingFile = Not booConsoleOnly
 	End Function
 	
+	Function checkFile(strLocation)
+		checkFile = fso.FileExists(strLocation)
+	End Function
+	
 	Sub Class_Terminate()
-		If Not (booConsoleOnly) And (isObject(fRes)) Then
-			fRes.close()
+		If Not (booConsoleOnly) Then
+			If (isObject(fRes)) Then
+				fRes.close()
+			End If
+			If (isObject(fShadow)) Then
+				fShadow.close()
+			End If
+			
+			If (checkFile(strResultLocation)) Then
+				fso.DeleteFile strShadowLocation
+			End If
+		
 		End If
 	End Sub
 End Class

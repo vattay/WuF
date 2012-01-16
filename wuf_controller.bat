@@ -53,6 +53,9 @@ set timestamp=%cur_yyyy%%cur_mm%%cur_dd%_%cur_hh%%cur_nn%%cur_ss%%cur_ms%
 
 REM ========================================================
 REM Conf Log ------------------------------------------
+if not exist log (
+	mkdir log
+)
 set log_file=log\controller-%timestamp%.log
 
 REM ========================================================
@@ -203,7 +206,7 @@ for /F "eol=;" %%i in (%groupFile%) do (
   ( copy agent\%master_agent% \\%%i\C$\windows\temp\%remote_agent% >> %log_file% 2>&1 )  
   if not errorlevel 1 ( 
     ( echo Remote executing wuf agent on %%i >> %log_file% >> %log_file% 2>&1)
-	( psexec %ATTACHED% -s \\%%i cscript.exe //NoLogo c:\windows\temp\%remote_agent% %action% /oN /d:%dropBoxLocation% /n:%dropResultPrefix%_%%i.txt %restart% 2>&1) 
+	( psexec %ATTACHED% -s \\%%i cscript.exe //NoLogo c:\windows\temp\%remote_agent% %action% /oN:%dropBoxLocation%\%dropResultPrefix%_%%i.txt %restart% 2>&1) 
   )
 )
 
