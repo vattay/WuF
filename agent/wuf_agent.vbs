@@ -120,6 +120,7 @@ Function main()
 			Else
 				call logErrorEx( "Unexpected exception.", Ex)
 			End If
+			cleanup()
 		End If
 	Else
 		core()
@@ -189,10 +190,14 @@ Function configure()
 			logError("Usage: " & WUF_USAGE)
 			configure = false
 			Exit Function
+		ElseIf  (Ex.number = WUF_INVALID_CONFIGURATION ) Then
+			call logErrorEx("Invalid config.", Ex)
+			logError("Usage: " & WUF_USAGE)
+			configure = false
+			Exit Function
 		Else
 			Dim strMessage
 			strMessage = "Unexpected exception during configuration."
-			call logErrorEx(strMessage, Ex)
 			configure = false
 			Err.Raise Ex.number, Ex.source & "; configure()", Ex.description & "; " &_
 				strMessage
@@ -345,7 +350,15 @@ Function checkConfig()
 			Err.Raise WUF_INVALID_CONFIGURATION, "checkConfig", "aA cannot be used with other actions"
 
 		End If	
-	End IF
+	End If
+	
+	If NOT ( (gAction and  WUF_ACTION_SEARCH) <> 0 ) Then
+		If 	( (gAction and  WUF_ACTION_DOWNLOAD) <> 0 ) OR _
+			( (gAction and  WUF_ACTION_INSTALL) <> 0 ) Then
+			
+			Err.Raise WUF_INVALID_CONFIGURATION, "checkConfig", "aS is required for aD or aI"
+		End If
+	End If
 
 End Function
 
@@ -607,10 +620,20 @@ End Function
 
 '*******************************************************************************
 Function cleanup()
-	'@@TODO: Add info here.
 	logInfo("Cleaning up")
+
+	Set gWshShell = nothing
+	Set gWshSysEnv = nothing
+	
+	Set gObjDummyDict = nothing
+	
+	Set gResWrt = nothing
+	
 	logInfo("WUF finished.")
 	gFileLog.close
+	
+	Set stdOut = nothing
+	Set stdErr = nothing
 End Function
 
 '**************************************************************************************
@@ -1534,17 +1557,24 @@ Function logEntry(intType, strMsg)
 	
 	strLine = "[" & time & "] - " & getLogTypeLabel(intType) & " - " & strMsg
 	
+	Dim preEx, Ex
+	Set preEx = New ErrWrap.catch() 'catch existing exception
 	On Error Resume Next
 		gFileLog.writeline strLine
-		If (err <> 0) Then
-			stdErr.writeLine "{LOG ERROR} Unable to write to log file. " & getFormattedErrorMsg( Err )
-		End If
+	Set Ex = New ErrWrap.catch() 'catch
 	On Error GoTo 0
+	If (err <> 0) Then
+		stdErr.writeLine "{LOG ERROR} Unable to write to log file. " & getFormattedErrorMsg( Err )
+	End If
 	
 	If (isCScript()) Then 
 		If (intType <= LOG_LEVEL_WARN ) Then
 			stdErr.writeLine strLine
 		End If
+	End If
+	
+	If (preEx.number <> 0) Then
+		Err.Raise preEx.number, preEx.source, preEx.Description
 	End If
 End Function
 
@@ -1788,6 +1818,10 @@ Class ResultWriter
 			
 			If (checkFile(strResultLocation)) Then
 				fso.DeleteFile strShadowLocation
+			Else
+				logError ( "Unable to verify result, leaving shadow at: " _
+					& strShadowLocation )
+
 			End If
 		
 		End If
