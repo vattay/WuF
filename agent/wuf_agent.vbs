@@ -89,7 +89,7 @@ Dim gFileLog 		'Wuf Agent Log object
 Dim gRunId			'Unique id of run
 Dim gObjUpdateSession 'The windows update session used for all wu operations
 Dim gObjDummyDict	'Used for async wu operations
-Dim gResWrt	'Object that takes care of result writing
+Dim gResOut			'Result writer
 
 Class DummyClass 'set up dummy class for async download and installation calls
 	Public Default Function DummyFunction()
@@ -141,6 +141,7 @@ Function core()
 	End If
 	cleanup()
 End Function
+
 '*******************************************************************************
 'Must be called first, configures globals needed for everything else.
 Function initialize()
@@ -158,7 +159,7 @@ Function initialize()
 	Call gObjDummyDict.Add("DummyFunction", New DummyClass)
 	
 	gLogLocation = WUF_DEFAULT_LOG_LOCATION & "_" & gRunId & ".log"
-	gResWrt = NULL
+	Set gResOut = New ResultWriter.init()
 	gAction = WUF_ACTION_UNDEFINED
 	gShutdownOption = WUF_DEFAULT_SHUTDOWN_OPTION
 	gForceShutdown = WUF_DEFAULT_FORCE_SHUTDOWN_ACTION
@@ -169,43 +170,44 @@ End Function
 Function configure()
 
 	configure = true
-	
 	configureLogFile(gLogLocation)
 	
-	logInfo( "WUF Agent " & APP_VERSION )
+	
+	logInfo( APP_NAME & " " & APP_VERSION & " " & Now() )
 	logInfo( "Log system initialized." )
 	
 	logInfo( "Run Id: " & gRunId )
 	
 	logDebug( "Parsing Configuration" )
 	
+	call gResOut.writeTitle(APP_NAME, APP_VERSION)
+	call gResOut.writeId( gRunId ) 
+	
+	Dim Ex
 	On Error Resume Next
 		parseArgs()
-	Dim Ex
 	Set Ex = New ErrWrap.catch() 'catch
 	On Error GoTo 0
 	If (Ex.number <> 0) Then
 		If (Ex.number = WUF_INPUT_ERROR) Then
-			call logErrorEx("Improper input.", Ex)
-			logError("Usage: " & WUF_USAGE)
+			gResOut.recordError( "Improper input." )
+			gResOut.recordInfo( WUF_USAGE)
+			call logError("Improper input.")
 			configure = false
 			Exit Function
 		ElseIf  (Ex.number = WUF_INVALID_CONFIGURATION ) Then
-			call logErrorEx("Invalid config.", Ex)
-			logError("Usage: " & WUF_USAGE)
+			gResOut.recordError( "Invalid Configuration, " & Ex.Description )
+			gResOut.recordInfo( WUF_USAGE)
+			call logError("Invalid config.")
 			configure = false
 			Exit Function
 		Else
+			gResOut.recordError( "Unknown problem, " & Ex.Description )
 			Dim strMessage
-			strMessage = "Unexpected exception during configuration."
 			configure = false
-			Err.Raise Ex.number, Ex.source & "; configure()", Ex.description & "; " &_
-				strMessage
+			Err.Raise Ex.number, Ex.source & "; configure()", Ex.description
 		End If
 	End If
-	
-	gResWrt.wl(APP_NAME & " " & APP_VERSION & " initialized at " & Now())
-	call gResWrt.wal("init.ruid", gRunId ) 
 	
 	logDebug("Creating Update Session.")
 	Set gObjUpdateSession = CreateObject("Microsoft.Update.Session")
@@ -219,9 +221,11 @@ Function parseArgs()
     Dim objArgs, objNamedArgs, objUnnamedArgs
 	Dim success
 	
+	Dim strOutputLocation
 	Dim booShutdownFlag
 	Dim booResultFileFlag
 	
+	strOutputLocation = ""
 	booResultFileFlag = false
 	booShutdownFlag = false
 	success = false
@@ -254,23 +258,27 @@ Function parseArgs()
 					Err.Raise WUF_INPUT_ERROR, "Wuf.parseArgs()", "Invalid force option."
 				End If
 			ElseIf ( headStrI(arg,"o") ) Then
-				If Not( parseOutputOption(arg) ) Then
-					Err.Raise WUF_INPUT_ERROR, "Wuf.parseArgs()", "Invalid output option."
-				Else
-					booResultFileFlag = true
-				End If
+				booResultFileFlag = true
+				strOutputLocation = parseOutputOption(arg)
 			Else
 				success = false
 				Err.Raise WUF_INPUT_ERROR, "Wuf.parseArgs()", "Unknown named argument: " & arg	
 			End If
 		Next
-		If Not (booResultFileFlag) Then
-			Set gResWrt = New ResultWriter.initCon()
-		End If
+		
 		For Each arg in objUnnamedArgs
 			success = false
 			Err.Raise WUF_INPUT_ERROR, "Wuf.parseArgs()", "Unknown argument: " & arg
 		Next
+		
+		If (booResultFileFlag) Then
+			If strOutputLocation = "" Then
+				call gResOut.addFileStream(gRunId & ".csv", generateShadowLocation())
+			Else
+				call gResOut.addFileStream(strOutputLocation, generateShadowLocation())
+			End If
+		End If
+		
 	Else
 		' No Args
 		success = false
@@ -324,18 +332,12 @@ Function parseForceShutdown(strArgVal) 'return boolean
 End Function
 
 '*******************************************************************************
-Function parseOutputOption(strArgVal)
-	parseOutputOption = True
+Function parseOutputOption(strArgVal) 'return boolean
+	parseOutputOption = ""
 	If (strCompI(strArgVal,"oN")) Then
-		Dim strResultLocation
-		strResultLocation = Wscript.Arguments.Named(strArgVal)
-		If strResultLocation = "" Then
-			Set gResWrt = New ResultWriter.initG()
-		Else
-			Set gResWrt = New ResultWriter.init(strResultLocation)
-		End If
+		parseOutputOption = Wscript.Arguments.Named(strArgVal)
 	Else
-		parseOutputOption = False
+		Err.Raise WUF_INPUT_ERROR, "Wuf.parseArgs()", "Invalid output option."
 	End If
 End Function
 
@@ -401,7 +403,7 @@ Function preAction()
 	logInfo("Performing Pre-Action.")
 	logEnvironment()
 	logLocalWuSettings()
-	recordPreConditions()
+	gResOut.recordPendingShutdown(isShutdownActionPending())
 	logInfo("Pre-Action Complete.")
 End Function
 
@@ -428,7 +430,6 @@ Function wuDownloadWrapper(objSearchResults)
 	Dim downloadResults
 
 	Dim Ex
-	
 	On Error Resume Next
 		If (WUF_ASYNC = 1) Then
 			Set downloadResults = wuDownloadAsync(objSearchResults)
@@ -438,17 +439,18 @@ Function wuDownloadWrapper(objSearchResults)
 	Set Ex = New ErrWrap.catch() 'catch
 	On Error GoTo 0
 	If (Ex.number <> 0) Then
-		call gResWrt.wl( "download.failure!" )
+		'@TODO review this behavior
 		If (Ex.number = cLng("&H80240024") ) Then
-			call gResWrt.wal( "download.failure!.reason", Ex.Description )
+			gResOut.recordDownloadFailure( "No updates to download." )
 		Else 
-			Err.Raise Ex.number, Ex.Source, Ex.Description
+			gResOut.recordDownloadFailure( Ex.Description )
+			Err.Raise Ex.number, Ex.Source & "; wuDownloadWrapper()", Ex.Description
 		End If
 		Exit Function
 	End If		
 		
 	call logDownloadResult(objSearchResults.updates, downloadResults)
-	call recordDownloadResult(objSearchResults.updates, downloadResults)
+	call gResOut.recordDownloadResult(objSearchResults.updates, downloadResults)
 	
 End Function
 
@@ -458,7 +460,6 @@ Function wuInstallWrapper(objSearchResults)
 	Dim installResults
 	
 	Dim Ex
-	
 	On Error Resume Next
 		If (WUF_ASYNC = 1) Then
 			Set installResults = wuInstallAsync(objSearchResults)
@@ -468,17 +469,18 @@ Function wuInstallWrapper(objSearchResults)
 	Set Ex = New ErrWrap.catch() 'catch
 	On Error GoTo 0
 	If (Ex.number <> 0) Then
-		call gResWrt.wl( "install.failure!" )
+		'@TODO review this behavior
 		If (Ex.number = cLng("&H80240024") ) Then
-			call gResWrt.wal( "install.failure!.reason", Ex.Description )
+			gResOut.recordInstallFailure( "No updates to install" )
 		Else 
-			Err.Raise Ex.number, Ex.Source, Ex.Description
+			gResOut.recordInstallFailure( Ex.Description )
+			Err.Raise Ex.number, Ex.Source & "; wuInstallWrapper()", Ex.Description
 		End If
 		Exit Function
 	End If
 
 	call logInstallationResult(objSearchResults.updates,installResults)
-	call recordInstallationResult(objSearchResults.updates, installResults )
+	call gResOut.recordInstallationResult(objSearchResults.updates, installResults )
 	
 End Function
 
@@ -496,7 +498,7 @@ Function manualAction(intAction)
 		intUpdateCount = searchResults.Updates.Count
 		
 		logSearchResult( searchResults )
-		recordSearchResult( searchResults )
+		gResOut.recordSearchResult( searchResults )
 	End If
 	
 	If (intUpdateCount > 0) Then
@@ -514,107 +516,14 @@ Function manualAction(intAction)
 End Function
 
 '*******************************************************************************
-Function recordPreConditions()
-	call gResWrt.wal( "pre.restart.required", isShutdownActionPending() )
-End Function
-
-'*******************************************************************************
-Function recordSearchResult( objSearchResults )
-	call gResWrt.wal( "search.result.count", objSearchResults.Updates.Count)
-		
-	call gResWrt.wal( "search.result.code", _
-		getOperationResultMsg(objSearchResults.ResultCode) )
-	
-	Dim searchList
-	searchList = ""
-	
-	Dim i
-	For i = 0 To ( objSearchResults.Updates.Count-1 )
-		Dim update, updateLine
-		Set update = objSearchResults.Updates.Item(i)
-
-		updateLine = update.title & "|" & update.installationBehavior.impact
-		If (i = 0 ) Then
-			searchlist = updateLine
-		Else
-			searchlist = searchList & VBCRLF & "  ," & updateLine
-		End If
-	Next
-	
-	call gResWrt.wal( "search.result.list", searchList)
-End Function
-
-'*******************************************************************************
-Function recordDownloadResult( objUpdates, objDownloadResults )
-	call gResWrt.wal("download.result.count", _
-		objUpdates.Count)
-	call gResWrt.wal( "download.result.code", _
-		getOperationResultMsg(objDownloadResults.ResultCode) )
-	
-	Dim dlList
-	dlList = ""
-	
-	Dim i
-	For i = 0 To ( objUpdates.Count-1 )
-		Dim update, updateLine, dlLine
-		Set update = objUpdates.Item(i)
-
-		dlLine = update.title & "|" &  _
-			getOperationResultMsg(objDownloadResults.GetUpdateResult(i).ResultCode)
-		If (i = 0 ) Then
-			dlList = dlLine
-		Else
-			dlList = dlList & VBCRLF & "  ," & dlLine
-		End If
-	Next
-	
-	call gResWrt.wal( "download.result.list", dlList)
-End Function
-
-'*******************************************************************************
-Function recordInstallationResult( objUpdates, objInstallationResults )
-	call gResWrt.wal("install.result.count", _
-		objUpdates.Count)
-		
-	call gResWrt.wal( "install.result.code", _
-		getOperationResultMsg(objInstallationResults.ResultCode) )
-	call gResWrt.wal( "install.reboot_required", _
-		objInstallationResults.RebootRequired )
-	
-	Dim instList
-	instList = ""
-	
-	Dim i
-	For i = 0 To ( objUpdates.Count-1 )
-		Dim update, updateLine, instLine
-		Set update = objUpdates.Item(i)
-
-		instLine = update.title & "|" & _
-			getOperationResultMsg(objInstallationResults.GetUpdateResult(i).ResultCode)
-		If ( i = 0 ) Then
-			instList = instLine
-		Else
-			instList = instList & VBCRLF & "  ," & instLine
-		End If
-	Next
-	
-	call gResWrt.wal( "install.result.list", instList)
-End Function
-
-'*******************************************************************************
-Function recordPostResult()
-	call gResWrt.wal("post.rebootPlanned", rebootPlanned())
-	call gResWrt.wal("post.complete_time", Now())
-End Function
-
-'*******************************************************************************
 Function postAction()
 	logInfo("Performing post-actions")
 	If (rebootPlanned()) Then
 		logInfo("System shutdown action will occur.")
 		call shutDownActionDelay(gShutdownOption, WUF_SHUTDOWN_DELAY)
 	End If
-	recordPostResult()
+	gResOut.recordShutdownPlan(rebootPlanned())
+	gResOut.recordComplete()
 	logInfo("Completed post-actions")
 End Function
 
@@ -627,7 +536,7 @@ Function cleanup()
 	
 	Set gObjDummyDict = nothing
 	
-	Set gResWrt = nothing
+	Set gResOut = nothing
 	
 	logInfo("WUF finished.")
 	gFileLog.close
@@ -650,29 +559,29 @@ Function wuSearch(strFilter) 'return ISearchResult
 	
 	logInfo("Starting Update Search.")
 	
-	Dim caughtErr
+	Dim Ex
 	On Error Resume Next
 		Set searchResult = updateSearcher.Search(strFilter)
-	Set caughtErr = New ErrWrap.catch() 'catch
+	Set Ex = New ErrWrap.catch() 'catch
 	On Error GoTo 0
-	If (caughtErr.number <> 0) Then
+	If (Ex.number <> 0) Then
 		Dim strMsg
-		If (caughtErr = cLng("&H80072F78") ) Then
+		If (Ex = cLng("&H80072F78") ) Then
 			strMsg = "ERROR_HTTP_INVALID_SERVER_RESPONSE - The server response could not be parsed."
-		ElseIf (caughtErr = cLng("&H8024402C") ) Then
+		ElseIf (Ex = cLng("&H8024402C") ) Then
 			strMsg = "WU_E_PT_WINHTTP_NAME_NOT_RESOLVED - Winhttp SendRequest/ReceiveResponse failed with 0x2ee7 error. Either the proxy " _
 			& "server or target server name can not be resolved. Corresponds to ERROR_WINHTTP_NAME_NOT_RESOLVED. " 
-		ElseIf (caughtErr = cLng("&H80072EFD") ) Then 
+		ElseIf (Ex = cLng("&H80072EFD") ) Then 
 			strMsg = "ERROR_INTERNET_CANNOT_CONNECT - The attempt to connect to the server failed."
-		ElseIf (caughtErr = cLng("&H8024401B") ) Then 
+		ElseIf (Ex = cLng("&H8024401B") ) Then 
 			strMsg = "SUS_E_PT_HTTP_STATUS_PROXY_AUTH_REQ - Http status 407 - proxy authentication required" 
-		ElseIf (caughtErr = cLng("&H8024002B") ) Then 
+		ElseIf (Ex = cLng("&H8024002B") ) Then 
 			strMsg = "WU_E_LEGACYSERVER - The Sus server we are talking to is a Legacy Sus Server (Sus Server 1.0)"
-		ElseIf (caughtErr = cLng("&H80244018") ) Then 
+		ElseIf (Ex = cLng("&H80244018") ) Then 
 			strMsg = "SUS_E_PT_HTTP_STATUS_FORBIDDEN HttProxy Status 403"
-		ElseIf (caughtErr = cLng("&H80072F8F") ) Then 
+		ElseIf (Ex = cLng("&H80072F8F") ) Then 
 			strMsg = "ERROR_INTERNET_SECURE_FAILURE ErrorClockWrong - Unable to establish secure connection due to clock sync issue"
-		ElseIf (caughtErr = 7) Then 
+		ElseIf (Ex = 7) Then 
 			strMsg = "Out of memory - In most cases, this error will be resolved by rebooting the client." 
 		Else
 			Dim strAddr
@@ -680,8 +589,8 @@ Function wuSearch(strFilter) 'return ISearchResult
 			strMsg = "Unknown problem searching for updates, refer to " & strAddr & "to look up error number." 
 			blnFatal = true
 		End If
-		call logErrorEx(strMsg,caughtErr)
-		Err.Raise caughtErr.Number, caughtErr.Source, caughtErr.Description
+		call logErrorEx(strMsg,Ex)
+		Err.Raise Ex.Number, Ex.Source, Ex.Description
 	End If
 	
 	If ( isObject( searchResult ) ) Then
@@ -710,12 +619,7 @@ Function wuDownload(objSearchResult)
 	Set Ex = New ErrWrap.catch() 'catch
 	On Error GoTo 0
 	If (Ex.number <> 0) Then
-		If (Ex.number = cLng("&H80240024")) Then
-			call logInfoEx( "No updates to download.", Ex )
-		Else
-			call logErrorEx( "Could not download updates.", Ex )
-			Err.Raise Ex.Number, Ex.Source & "; wuDownload()", Ex.Description
-		End If
+		Err.Raise Ex.Number, Ex.Source & "; wuDownload()", Ex.Description
 	End if
 	
 	
@@ -727,84 +631,7 @@ Function wuDownload(objSearchResult)
 	
 End Function
 
-'*******************************************************************************
-Function getDownloadPhase(intPhase)
-	Select Case intPhase
-	  Case 1
-		getDownloadPhase = "Initializing"
-	  Case 2
-		getDownloadPhase = "Downloading"
-	  Case 3
-		getDownloadPhase = "Verifying"
-	  Case Else
-		getDownloadPhase = "?"
-	End Select
-End Function
 
-'*******************************************************************************
-Function getTotalUpdateDownloadProgress(downloadProgress,updates)
-	Dim kbDown
-	kbDown = (cLng(downloadProgress.TotalBytesDownloaded) / 1000)
-	
-	Dim kbTotal
-	kbTotal = (cLng(downloadProgress.TotalBytesToDownload) / 1000)
-
-	getTotalUpdateDownloadProgress = "(" & kbTotal & _
-		"/" & kbDown & ")[" & downloadProgress.percentComplete & "]"
-End Function
-
-'*******************************************************************************
-Function getCurrentUpdateDownloadProgress(downloadProgress,updates)
-	Dim dp
-	Set dp = downloadProgress
-	
-	Dim currentUpdate
-	Set currentUpdate = updates.item(dp.currentUpdateIndex)
-	
-	Dim currentUpdateKb
-	'There is almost always just one KB
-	currentUpdateKb = currentUpdate.KBArticleIDs.Item(0) 
-	
-	Dim dlSize
-	dlSize = cLng(dp.currentUpdateBytesToDownload) / 1000
-	
-	Dim dlDone
-	dlDone = cLng(dp.currentUpdateBytesDownloaded) / 1000
-	
-	Dim dlPhase
-	dlPhase = getDownloadPhase(dp.CurrentUpdateDownloadPhase)
-	
-	Dim dlPct
-	dlPct = dp.CurrentUpdatePercentComplete
-	
-	getCurrentUpdateDownloadProgress = "{" & currentUpdateKb & "-" & _
-		dlPhase & "}(" & dlSize & "/" & dlDone & ")[" & dlPct & "]"
-	
-End Function
-
-'*******************************************************************************
-Function getTotalUpdateInstallProgress(InstallProgress,updates)
-	getTotalUpdateInstallProgress = "[" & InstallProgress.percentComplete & "]"
-End Function
-
-'*******************************************************************************
-Function getCurrentUpdateInstallProgress(InstallProgress,updates)
-	Dim ip
-	Set ip = InstallProgress
-	
-	Dim currentUpdate
-	Set currentUpdate = updates.item(ip.currentUpdateIndex)
-	
-	Dim currentUpdateKb
-	'There is almost always just one KB
-	currentUpdateKb = currentUpdate.KBArticleIDs.Item(0) 
-	
-	Dim ipPct
-	ipPct = ip.CurrentUpdatePercentComplete
-	
-	getCurrentUpdateInstallProgress = "{" & currentUpdateKb & "}[" & ipPct & "]"
-	
-End Function
 
 '*******************************************************************************
 Function wuDownloadAsync(objSearchResult)
@@ -828,31 +655,17 @@ Function wuDownloadAsync(objSearchResult)
 	Set Ex = New ErrWrap.catch() 'catch
 	On Error GoTo 0
 	If (Ex.number <> 0) Then
-		If Ex.number = cLng(&H80240024) Then
-			Dim strMsg
-			strMsg = " No updates available to download."
-			call logErrorEx( strMsg, Ex )
-			Err.Raise Ex.Number, Ex.Source & "; wuDownloadAsync()", Ex.Description & strMsg
-		Else
-			call logError( "Unknown problem downloading updates.")
-			Err.Raise Ex.Number, Ex.Source & "; wuDownloadAsync()", Ex.Description
-		End If
+		Err.Raise Ex.Number, Ex.Source & "; wuDownloadAsync()", Ex.Description
 	End If
 	
 	Set dlProgress = dlJob.getProgress()
 	
-	gResWrt.wl("")
-	
 	While Not getAsyncWuOpComplete(updates, dlProgress)  
 		set dlProgress = dlJob.getProgress()
-		WScript.Sleep(2000)
-		gResWrt.rw("                                                                          ")
-		gResWrt.rw( "download.status" & getTotalUpdateDownloadProgress(dlProgress,updates) & _
-			":" & getCurrentUpdateDownloadProgress(dlProgress,updates) )
+		call gResOut.recordDownloadStatus(dlProgress, updates)
 		logInfo( "Download Progress: " & dlProgress.percentcomplete & "%" )
+		WScript.Sleep(2000)
 	Wend
-	
-	gResWrt.wl("")
 	
 	If (dlJob.isCompleted = TRUE) Then 
 		logInfo("Asynchronous download completed." )
@@ -894,25 +707,24 @@ End Function
 
 '*******************************************************************************
 Function forceInstallerQuiet(objInstaller)
-	Dim caughtErr
+	Dim Ex
 	On Error Resume Next
-		installer.ForceQuiet = True 
-	Set caughtErr = New ErrWrap.catch() 'catch
+		objInstaller.ForceQuiet = True 
+	Set Ex = New ErrWrap.catch() 'catch
 	On Error GoTo 0
-	If (caughtErr.number <> 0) Then
-		call logErrorEx("Could not force installer to be quiet.", Err)
+	If (Ex.number <> 0) Then
+		call logErrorEx("Could not force installer to be quiet.", Ex)
 	End If
 End Function
 
 '*******************************************************************************
 Function wuInstall(objSearchResult)
-	Dim caughtErr
+	Dim Ex
 
 	Dim updatesToInstall
-	'Set updatesToInstall = CreateObject("Microsoft.Update.UpdateColl")
 	Set updatesToInstall = objSearchResult.Updates
 	
-	call gResWrt.wal("install.pre.dls.missing", countMissingUpdates(objSearchResult) )
+	gResOut.recordMissingDownloads( countMissingUpdates(objSearchResult) )
 	
 	logDebug("Creating Update Installer.")
 	
@@ -929,15 +741,10 @@ Function wuInstall(objSearchResult)
 	Dim installationResult
 	On Error Resume Next	
 		Set installationResult = installer.Install()
-	Set caughtErr = New ErrWrap.catch() 'catch
+	Set Ex = New ErrWrap.catch() 'catch
 	On Error GoTo 0	
-	If (caughtErr.number <> 0) Then
-		If (err.number = cLng(&H80240024)) then
-			logInfo( "No updates to install." )
-		Else
-			call logErrorEx("Could not install updates.", caughtErr)
-			Err.Raise caughtErr.Number, caughtErr.Source & "; wuInstall()", caughtErr.Description
-		End If
+	If (Ex.number <> 0) Then
+		Err.Raise Ex.Number, Ex.Source & "; wuInstall()", Ex.Description
 	End if
 	
 	If Not( isObject(installationResult) ) Then
@@ -950,15 +757,13 @@ End Function
 
 '*******************************************************************************
 Function wuInstallAsync(objSearchResult)
-	Dim caughtErr
 	Dim installJob, installProgress
 	Dim objInstallResult
-
+	
 	Dim updatesToInstall
-	'Set updatesToInstall = CreateObject("Microsoft.Update.UpdateColl")
 	Set updatesToInstall = objSearchResult.Updates
 	
-	call gResWrt.wal("install.pre.dls.missing", countMissingUpdates(objSearchResult) )
+	gResOut.recordMissingDownloads(countMissingUpdates(objSearchResult))
 		
 	logInfo ( "Number of updates to be installed that are downloaded: " & updatesToInstall.count )
 
@@ -980,31 +785,17 @@ Function wuInstallAsync(objSearchResult)
 	Set Ex = New ErrWrap.catch() 'catch
 	On Error GoTo 0
 	If (Ex.number <> 0) Then
-		If Ex.number = cLng(&H80240024) Then
-			Dim strMsg
-			strMsg = " No updates available to install."
-			call logErrorEx( strMsg, Ex )
-			Err.Raise Ex.Number, Ex.Source & "; wuInstallAsync()", Ex.Description & strMsg
-		Else
-			call logError( "Unknown problem installing updates.")
-			Err.Raise Ex.Number, Ex.Source & "; wuInstallAsync()", Ex.Description
-		End If
+		Err.Raise Ex.Number, Ex.Source & "; wuInstallAsync()", Ex.Description
 	End If
 	
 	set installProgress = installJob.getProgress()
 	
-	gResWrt.wl("")
-	
 	While Not getAsyncWuOpComplete(installer.Updates, installProgress) 
 		set installProgress = installJob.getProgress()
-		WScript.Sleep(5000)
-		gResWrt.rw("                                                                          ")
-		gResWrt.rw( "install.status" & getTotalUpdateInstallProgress(installProgress,updatesToInstall) & _
-			":" & getCurrentUpdateInstallProgress(installProgress,updatesToInstall) )
+		call gResOut.recordInstallStatus(installProgress,updatesToInstall)
 		logInfo( "Install Progress: " & installProgress.percentcomplete & "%" )
+		WScript.Sleep(2000)
 	Wend
-	
-	gResWrt.wl("")
 	
 	If (installJob.isCompleted = TRUE) Then 
 		logInfo("Asynchronous installation completed." )
@@ -1074,14 +865,13 @@ Function logDownloadResult(objUpdates, objDownloadResult)
 	End If
 
 	'Output results of install
-	logInfo("Download Result Code: " & _
-		getOperationResultMsg(objDownloadResult.ResultCode) )
+	logInfo( "Download Result Code: " & objDownloadResult.ResultCode )
 	
-	logInfo("Indvidual Update Download Results")
+	logInfo( "Indvidual Update Download Results" )
 	Dim i
 	For i = 0 to objUpdates.Count - 1
 		Dim strResult
-		strResult = getOperationResultMsg(objDownloadResult.GetUpdateResult(i).ResultCode)
+		strResult = objDownloadResult.GetUpdateResult(i).ResultCode
 		logInfo(objUpdates.Item(i).Title & ", " & objUpdates.Item(i).identity.updateId & ": " & strResult)
 	Next
 	
@@ -1103,7 +893,7 @@ Function logInstallationResult(objUpdates, objInstallationResult)
 	Dim i
 	For i = 0 to objUpdates.Count - 1
 		Dim strResult
-		strResult = getOperationResultMsg(objInstallationResult.GetUpdateResult(i).ResultCode)
+		strResult = objInstallationResult.GetUpdateResult(i).ResultCode
 		logInfo(objUpdates.Item(i).Title & ": " & strResult)
 	Next
 End Function
@@ -1163,14 +953,14 @@ Function checkUpdateAgent() 'returns boolean (true if version is ok)
 	logDebug("Checking version of Windows Update agent against version " _
 	& WU_AGENT_VERSION & "...")
 	
-	Dim caughtErr
+	Dim Ex
 	On Error Resume Next
 		Set objAgentInfo = CreateObject("Microsoft.Update.AgentInfo") 
-	Set caughtErr = New ErrWrap.catch() 'catch
+	Set Ex = New ErrWrap.catch() 'catch
 	On Error GoTo 0
-	If (caughtErr.number <> 0) Then
+	If (Ex.number <> 0) Then
 		logError( "Unable to get Agent Info object, perhaps windows updates haven't been configured?" )
-		Err.Raise caughtErr.Number, caughtErr.Source & "; checkUpdateAgent()", caughtErr.Description
+		Err.Raise Ex.Number, Ex.Source & "; checkUpdateAgent()", Ex.Description
 	End If
 
 	autoUpdateSettings = objAgentInfo.GetInfo("ProductVersionString")
@@ -1449,25 +1239,7 @@ Function logLocalWuSettings()
 
 End Function
 
-'*******************************************************************************
-Function getOperationResultMsg(intResultCode)
-	Dim strResult
-	If intResultCode = 0 Then 
-		strResult = "Not Started"
-	ElseIf intResultCode = 1 Then 
-		strResult = "In progress"
-	ElseIf intResultCode = 2 Then 
-		strResult = "Succeded"
-	ElseIf intResultCode = 3 Then 
-		strResult = "Succeeded with Errors"
-	ElseIf intResultCode = 4 Then 
-		strResult = "Failed"
-	ElseIf intResultCode = 5 Then 
-		strResult = "Aborted"			
-	End If
-	
-	getOperationResultMsg = strResult
-End Function
+
 
 '**************************************************************************************
 Function logEnvironment()
@@ -1675,128 +1447,406 @@ Function rebootPlanned()
 End Function
 
 '*******************************************************************************
-Function genResultFileName()
-	genResultFileName = genRunId & ".txt"
+Function generateShadowLocation()
+	
+	Dim wshShell
+	
+	Set wshShell = CreateObject("WScript.shell")
+	
+	Dim tempDir 
+	
+	tempDir = wshShell.ExpandEnvironmentStrings("%temp%")
+	
+	generateShadowLocation = tempDir & "\" & gRunId & ".tmp"
+
 End Function
 
 '===============================================================================
 '===============================================================================
-Class ResultWriter
-	Dim strResultLocation
-	Dim strShadowLocation
-	Dim fRes
-	Dim fShadow
+Class psuedoTee
+	Dim fStream
 	Dim stdOut
-	Dim stdErr
-	Dim booConsoleOnly
-	Dim fso
 	
-	'Custom Constructor - Console Only
-	Function initCon()
-		booConsoleOnly = true
-		
+	Function init(fStream)
 		Set stdOut = WScript.StdOut
-		Set stdErr = Wscript.StdErr
-		
-		Set initCon = Me
+		Set me.fStream = fStream
+		Set init = me
 	End Function
 	
-	'Custom Constructor - Take filename
-	Function init(strResultLocation)
-	
-		Dim strShadowLocation
-		
-		Dim wshShell
-		
-		Set wshShell = CreateObject("WScript.shell")
-		
-		Dim tempDir 
-		
-		tempDir = wshShell.ExpandEnvironmentStrings("%temp%")
-		
-		strShadowLocation = tempDir & "\" & genRunId & ".tmp"
-
-		Set init = initCore(strResultLocation, strShadowLocation)
-		
-	End Function
-	
-	'Custom Constructor - Generate filename
-	Function initG()
-	
-		Set initG = init(genRunId & ".csv")
-		
-	End Function
-	
-	Private Function initCore(strResultLocation, strShadowLocation)
-		Set stdOut = WScript.StdOut
-		Set stdErr = Wscript.StdErr
-		
-		Me.strResultLocation = strResultLocation
-		Me.strShadowLocation = strShadowLocation
-		
-		Set fso = CreateObject("Scripting.FileSystemObject")
-		
-		Set fShadow = tryCreateResultFile(strShadowLocation)
-		Set fRes = tryCreateResultFile(strResultLocation)
-		
-		Set initCore = Me
-	End Function
-	
-	Function tryCreateResultFile(strResultLocation)
-		Dim Ex
-		On Error Resume Next
-			Set tryCreateResultFile = fso.createTextFile( strResultLocation, True )
-		Set Ex = New ErrWrap.catch() 'catch
-		On Error GoTo 0
-		If (Ex.number <> 0) Then
-			Err.Raise Ex.number, Ex.Source & _
-				"; ResultWriter.tryCreateResultFile()", _
-				Ex.Description & "; Unable to write to file: " & strResultLocation
-		End If
-	End Function
-	
-	Private Function format(str)
-		format = str & ";"
-	End Function
-	
-	Private Function writeLine(strMessage)
+	Function writeLine(strMessage) 'write Line
 		stdOut.writeLine strMessage
-		If Not (booConsoleOnly) Then
-			fShadow.writeLine(format(strMessage))
-			fRes.writeLine(format(strMessage))
+		fStream.writeLine strMessage
+	End Function
+	
+	Function write(strMessage) 'write
+		stdOut.writeLine strMessage
+		fStream.writeLine strMessage
+	End Function
+	
+	Function close()
+		If (isObject(fStream)) Then
+			fStream.close()
 		End If
 	End Function
 	
+	Sub Class_Terminate
+		close()
+	End Sub
+End Class
+
+
+'===============================================================================
+'===============================================================================
+Class ResultWriter
+	Dim stdOut, stdErr
+	Dim strResultLocation
+	Dim stream
+	
+	Function init()
+	
+		Set stdOut = WScript.StdOut
+		Set stdErr = Wscript.StdErr
+		
+		Set stream = StdOut
+		
+		Set init = Me
+		
+	End Function
+	
+	Function addFileStream(strResultLocation, strShadowLocation)
+	
+		Dim shadowStream
+	
+		Set shadowStream = New ShadowedFileOutputStreamWriter.init(strResultLocation,strShadowLocation)
+		
+		Set stream = New psuedoTee.init(shadowStream)
+	End Function
+	
+	'---------------------------------------------------------------------------------
+	Function recordUpdates( objSearchResults )
+		
+		Dim searchList
+		searchList = ""
+		
+		Dim i
+		For i = 0 To ( objSearchResults.Updates.Count-1 )
+			Dim update, updateLine
+			Set update = objSearchResults.Updates.Item(i)
+			
+			updateLine = "{" & update.title & _
+				"|impact=" & update.installationBehavior.impact & _
+				"|isDownloaded=" & update.isDownloaded & _
+				"|isInstalled=" & update.isInstalled & _
+				"}"
+			If (i = 0 ) Then
+				searchlist = updateLine
+			Else
+				searchlist = searchList & VBCRLF & "  ," & updateLine
+			End If
+		Next
+		
+		call stream.writeLine( getPair("search.result.list", searchList) )
+	End Function
+	
+	'---------------------------------------------------------------------------------
+	Function recordSearchResult( objSearchResults )
+		stream.writeLine( getPair( "search.result.count", _
+			objSearchResults.Updates.Count) )
+			
+		stream.writeLine( getPair( "search.result.code", _
+			getOperationResultMsg( objSearchResults.ResultCode) ) )
+		
+		recordUpdates(objSearchResults)
+	End Function
+	
+	'---------------------------------------------------------------------------------
+	Function recordUpdateResult( objUpdates, objResults, strType )
+		stream.writeLine( getPair( strType & ".result.count", _
+			objUpdates.Count ) )
+		stream.writeLine( getPair( strType & ".result.code", _
+			getOperationResultMsg(objResults.ResultCode ) ) )
+		
+		Dim dlList
+		dlList = ""
+		
+		Dim i
+		For i = 0 To ( objUpdates.Count-1 )
+			Dim update, updateLine, dlLine
+			Set update = objUpdates.Item(i)
+
+			dlLine = update.title & "|" &  _
+				getOperationResultMsg(objResults.GetUpdateResult(i).ResultCode)
+			If (i = 0 ) Then
+				dlList = dlLine
+			Else
+				dlList = dlList & VBCRLF & "  ," & dlLine
+			End If
+		Next
+		
+		call stream.writeLine( getPair( strType & ".result.list", dlList ) )
+	End Function
+	
+	'---------------------------------------------------------------------------------
+	Function recordDownloadResult( objUpdates, objDownloadResults )
+		call recordUpdateResult( objUpdates,  objDownloadResults, "download" )
+	End Function
+	
+	'---------------------------------------------------------------------------------
+	Function recordDownloadFailure( strReason )
+		stream.writeLine(getPair("download.failure!.reason",strReason))
+	End Function
+	
+	'---------------------------------------------------------------------------------
+	Function recordInstallFailure( strReason )
+		stream.writeLine(getPair("install.failure!.reason",strReason))
+	End Function
+	
+	'---------------------------------------------------------------------------------
+	Function recordDownloadStatus(objDlProgress, objUpdates)
+		reWrite("                                                                              ")
+		reWrite( "download.status" & getTotalUpdateDownloadProgress(objDlProgress,objUpdates) & _
+			":" & getCurrentUpdateDownloadProgress(objDlProgress,objUpdates) )
+	End Function
+	
+	'---------------------------------------------------------------------------------
+	Function recordInstallStatus(objInstallProgress, objUpdates)
+		reWrite("                                                                               ")
+		reWrite( "install.status" & getTotalUpdateInstallProgress(objInstallProgress,objUpdates) & _
+			":" & getCurrentUpdateInstallProgress(objInstallProgress,objUpdates) )
+	End Function
+
+	'---------------------------------------------------------------------------------
+	Function recordInstallationResult( objUpdates, objInstallationResults )
+		stream.writeLine( getPair("install.reboot_required", _
+			objInstallationResults.RebootRequired ) )
+			
+		call recordUpdateResult( objUpdates, objInstallationResults, "install" )
+	End Function
+
+	'---------------------------------------------------------------------------------
+	Function recordMissingDownloads(intMissing)
+		stream.writeLine( getPair( "install.pre.dls.missing", intMissing ) )
+	End Function
+	
+	'---------------------------------------------------------------------------------
+	Function recordShutdownPlan(booIsShutdownPlanned)
+		stream.writeLine(getPair("post.rebootPlanned", booIsShutdownPlanned))
+	End Function
+	
+	'---------------------------------------------------------------------------------
+	Function recordComplete()
+		stream.writeLine( getPair( "post.complete_time", Now() ) )
+	End Function
+	
+	'---------------------------------------------------------------------------------
+	Function recordError( strMessage )
+		stream.writeLine( "#error:" & strMessage )
+	End Function
+	
+	'---------------------------------------------------------------------------------
+	Function recordInfo( strMessage )
+		stream.writeLine( "#info:" & strMessage )
+	End Function
+	
+	'---------------------------------------------------------------------------------
+	Function writeTitle(strName, strVersion)
+		stream.writeLine("#" & strName & " " & strVersion & " " & Now())
+	End Function
+	
+	'---------------------------------------------------------------------------------
+	Function writeId( strRunId )
+		stream.writeLine( getPair("init.ruid", strRunId) )
+	End Function
+	
+	'---------------------------------------------------------------------------------
+	Function recordPendingShutdown(strPendingShutdownAction)
+		stream.writeLine( getPair("pre.restart.required", strPendingShutdownAction ) )
+	End Function
+	
+	'---------------------------------------------------------------------------------
+	Function getPair(strKey, strVal)
+		getPair = strKey & ":" & strVal
+	End Function
+	
+	'---------------------------------------------------------------------------------
+	Function getDownloadPhase(intPhase)
+		Select Case intPhase
+		  Case 1
+			getDownloadPhase = "Initializing"
+		  Case 2
+			getDownloadPhase = "Downloading"
+		  Case 3
+			getDownloadPhase = "Verifying"
+		  Case Else
+			getDownloadPhase = "?"
+		End Select
+	End Function
+
+	'---------------------------------------------------------------------------------
+	Function getTotalUpdateDownloadProgress(downloadProgress,updates)
+		Dim kbDown
+		kbDown = (cLng(downloadProgress.TotalBytesDownloaded) / 1000)
+		
+		Dim kbTotal
+		kbTotal = (cLng(downloadProgress.TotalBytesToDownload) / 1000)
+
+		getTotalUpdateDownloadProgress = "(" & kbTotal & _
+			"/" & kbDown & ")[" & downloadProgress.percentComplete & "]"
+	End Function
+
+	'---------------------------------------------------------------------------------
+	Function getCurrentUpdateDownloadProgress(downloadProgress,updates)
+		Dim dp
+		Set dp = downloadProgress
+		
+		Dim currentUpdate
+		Set currentUpdate = updates.item(dp.currentUpdateIndex)
+		
+		Dim currentUpdateKb
+		'There is almost always just one KB
+		currentUpdateKb = currentUpdate.KBArticleIDs.Item(0) 
+		
+		Dim dlSize
+		dlSize = cLng(dp.currentUpdateBytesToDownload) / 1000
+		
+		Dim dlDone
+		dlDone = cLng(dp.currentUpdateBytesDownloaded) / 1000
+		
+		Dim dlPhase
+		dlPhase = getDownloadPhase(dp.CurrentUpdateDownloadPhase)
+		
+		Dim dlPct
+		dlPct = dp.CurrentUpdatePercentComplete
+		
+		getCurrentUpdateDownloadProgress = "{" & currentUpdateKb & "-" & _
+			dlPhase & "}(" & dlSize & "/" & dlDone & ")[" & dlPct & "]"
+		
+	End Function
+
+	'---------------------------------------------------------------------------------
+	Function getTotalUpdateInstallProgress(InstallProgress,updates)
+		getTotalUpdateInstallProgress = "[" & InstallProgress.percentComplete & "]"
+	End Function
+
+	'---------------------------------------------------------------------------------
+	Function getCurrentUpdateInstallProgress(InstallProgress,updates)
+		Dim ip
+		Set ip = InstallProgress
+		
+		Dim currentUpdate
+		Set currentUpdate = updates.item(ip.currentUpdateIndex)
+		
+		Dim currentUpdateKb
+		'There is almost always just one KB
+		currentUpdateKb = currentUpdate.KBArticleIDs.Item(0) 
+		
+		Dim ipPct
+		ipPct = ip.CurrentUpdatePercentComplete
+		
+		getCurrentUpdateInstallProgress = "{" & currentUpdateKb & "}[" & ipPct & "]"
+		
+	End Function
+	
+	'---------------------------------------------------------------------------------
+	Function getOperationResultMsg(intResultCode)
+		Dim strResult
+		If intResultCode = 0 Then 
+			strResult = "Not Started"
+		ElseIf intResultCode = 1 Then 
+			strResult = "In progress"
+		ElseIf intResultCode = 2 Then 
+			strResult = "Succeded"
+		ElseIf intResultCode = 3 Then 
+			strResult = "Succeeded with Errors"
+		ElseIf intResultCode = 4 Then 
+			strResult = "Failed"
+		ElseIf intResultCode = 5 Then 
+			strResult = "Aborted"			
+		End If
+		
+		getOperationResultMsg = strResult
+	End Function
+	
+	'---------------------------------------------------------------------------------
+	' Do not output this to the tee, unless you want a huge pointless result file.
 	Private Function reWrite(strMessage)
 		stdOut.write chr(13) & strMessage
 	End Function
 	
-	Private Function write(strMessage)
-		stdOut.write strMessage
-		If Not (booConsoleOnly) Then
-			fShadow.writeLine(format(strMessage))
-			fRes.writeLine(format(strMessage))
+	'---------------------------------------------------------------------------------
+	Sub Class_Terminate()
+		Set stream = nothing
+	End Sub
+End Class
+
+'===============================================================================
+'===============================================================================
+Class ShadowedFileOutputStreamWriter
+	Dim strOutputLocation
+	Dim strShadowLocation
+	Dim fStream
+	Dim fShadow
+	Dim fso
+	
+	'Custom Constructor - Take filename and shadow location
+	Function init(strOutputLocation, strShadowLocation)
+		
+		Me.strOutputLocation = strOutputLocation
+		Me.strShadowLocation = strShadowLocation
+		
+		Set fso = CreateObject("Scripting.FileSystemObject")
+		
+		Set fShadow = tryCreateFile(strShadowLocation)
+		Set fStream = tryCreateFile(strOutputLocation)
+		
+		Set init = Me
+	End Function
+	
+	Function tryCreateFile(strOutputLocation)
+		Dim Ex
+		On Error Resume Next
+			Set tryCreateFile = fso.createTextFile( strOutputLocation, True )
+		Set Ex = New ErrWrap.catch() 'catch
+		On Error GoTo 0
+		If (Ex.number <> 0) Then
+			Err.Raise Ex.number, Ex.Source & _
+				"; ShadowedFileOutputStreamWriter.tryCreateFile()", _
+				Ex.Description & "; Unable to write to file: " & strOutputLocation
 		End If
 	End Function
 	
-	Function wl(strMessage) 'write Line
-		call writeLine(strMessage)
+	Function writeLine(strMessage)
+		fShadow.writeLine(strMessage)
+		fStream.writeLine(strMessage)
 	End Function
 	
-	Function w(strMessage) 'write
-		call writeLine(strMessage)
+	Function write(strMessage) 
+		fShadow.writeLine(strMessage)
+		fStream.writeLine(strMessage)
 	End Function
 	
-	Function rw(strMessage) 're write to console only
-		call reWrite(strMessage)
-	End Function
-	
-	Function wal(strAttribute,strValue)
-		call writeLine(strAttribute & ":" & strValue)
+	Function close()
+		If (isObject(fStream)) Then
+			fStream.close
+			fStream = NULL
+		End If
+		If (isObject(fShadow)) Then
+			fShadow.close
+			fShadow = NULL
+		End If
+		
+		If ( checkFile(strOutputLocation) ) Then
+			If ( fso.fileExists(strShadowLocation) ) Then
+				fso.DeleteFile strShadowLocation
+			End If
+		Else
+			logError ( "Unable to verify output file, leaving shadow at: " _
+				& strShadowLocation )
+		End If
 	End Function
 	
 	Function getLocation()
-		getLocation = strResultLocation
+		getLocation = strOutputLocation
 	End Function
 	
 	Function isUsingFile()
@@ -1808,23 +1858,7 @@ Class ResultWriter
 	End Function
 	
 	Sub Class_Terminate()
-		If Not (booConsoleOnly) Then
-			If (isObject(fRes)) Then
-				fRes.close()
-			End If
-			If (isObject(fShadow)) Then
-				fShadow.close()
-			End If
-			
-			If (checkFile(strResultLocation)) Then
-				fso.DeleteFile strShadowLocation
-			Else
-				logError ( "Unable to verify result, leaving shadow at: " _
-					& strShadowLocation )
-
-			End If
-		
-		End If
+		close()
 	End Sub
 End Class
 
@@ -1837,9 +1871,9 @@ End Class
 ' You must use this format in your code to simulate a try catch
 ' On Error Resume Next 'try
 ' 	... 'code that could throw exception
-' Set caughtErr = New ErrWrap.catch() 'catch
+' Set Ex = New ErrWrap.catch() 'catch
 ' On Error GoTo 0 'catch part two
-' If (caughtErr = <some_err_num>) Then
+' If (Ex = <some_err_num>) Then
 ' 	... 'Handle error
 ' End If
 
