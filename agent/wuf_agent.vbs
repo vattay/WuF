@@ -55,6 +55,7 @@ Const WUF_INPUT_ERROR = 10001
 Const WUF_FEEDBACK_ERROR = 10002
 Const WUF_NO_UPDATES = 10003
 Const WUF_INVALID_CONFIGURATION = 10004
+Const WUF_SEARCH_ERROR = 10005
 
 Const WUF_ACTION_UNDEFINED = 0
 Const WUF_ACTION_AUTO = 	1
@@ -90,6 +91,7 @@ Dim gRunId			'Unique id of run
 Dim gObjUpdateSession 'The windows update session used for all wu operations
 Dim gObjDummyDict	'Used for async wu operations
 Dim gResOut			'Result writer
+Dim e				'Exception manager
 
 Class DummyClass 'set up dummy class for async download and installation calls
 	Public Default Function DummyFunction()
@@ -108,6 +110,8 @@ Function main()
 		WScript.quit
 	End If
 	
+	initialize()
+	
 	If (WUF_CATCH_ALL_EXCEPTIONS = 1) Then
 		On Error Resume Next
 			core()
@@ -115,10 +119,25 @@ Function main()
 		Set Ex = New ErrWrap.catch() 'catch
 		On Error GoTo 0
 		If (Ex.number <> 0) Then
+			Dim strMsg
 			If Ex.number = cLng(&H80240044) Then
-				call logErrorEx( "Insufficient access, try running as administrator.", Ex )
+				strMsg = "Insufficient access, try running as administrator." 
+				gResOut.recordError( strMsg )
+				call logErrorEx( strMsg, Ex )
+			ElseIf (Ex.number = WUF_INPUT_ERROR) Then
+				gResOut.recordError( "Improper input." )
+				gResOut.recordInfo( WUF_USAGE )
+				call logError("Improper input.")
+			ElseIf  (Ex.number = WUF_INVALID_CONFIGURATION ) Then
+				gResOut.recordError( "Invalid Configuration, " & Ex.Description )
+				gResOut.recordInfo( WUF_USAGE )
+				call logError("Invalid config.")
+			ElseIf  (Ex.number = WUF_SEARCH_ERROR ) Then
+				gResOut.recordError( "Search Problem, " & Ex.Description )
+				call logErrorEx( "Invalid config.", Ex )
 			Else
-				call logErrorEx( "Unexpected exception.", Ex)
+				gResOut.recordError(Ex.Description)
+				call logErrorEx( "Exception occured during core execution.", Ex)
 			End If
 			cleanup()
 		End If
@@ -131,13 +150,11 @@ End Function
 
 '*******************************************************************************
 Function core()
-	initialize()
-	If  (configure() = true) Then
-		If (verify() = true) Then
-			preAction()
-			doAction(gAction)
-			postAction()
-		End If
+	configure()
+	If (verify() = true) Then
+		preAction()
+		doAction(gAction)
+		postAction()
 	End If
 	cleanup()
 End Function
@@ -190,21 +207,6 @@ Function configure()
 	On Error GoTo 0
 	If (Ex.number <> 0) Then
 		If (Ex.number = WUF_INPUT_ERROR) Then
-			gResOut.recordError( "Improper input." )
-			gResOut.recordInfo( WUF_USAGE)
-			call logError("Improper input.")
-			configure = false
-			Exit Function
-		ElseIf  (Ex.number = WUF_INVALID_CONFIGURATION ) Then
-			gResOut.recordError( "Invalid Configuration, " & Ex.Description )
-			gResOut.recordInfo( WUF_USAGE)
-			call logError("Invalid config.")
-			configure = false
-			Exit Function
-		Else
-			gResOut.recordError( "Unknown problem, " & Ex.Description )
-			Dim strMessage
-			configure = false
 			Err.Raise Ex.number, Ex.source & "; configure()", Ex.description
 		End If
 	End If
@@ -410,6 +412,8 @@ End Function
 '*******************************************************************************
 Function doAction(intAction)
 
+	Dim searchResults
+
 	logInfo("Performing Action.")
 	
 	Dim objUpdateResults
@@ -417,8 +421,10 @@ Function doAction(intAction)
 	If ((intAction and WUF_ACTION_AUTO) <> 0) Then
 		autoDetect()
 	Else
-		call manualAction(intAction)
+		Set searchResults = manualAction(intAction)
 	End If
+	
+	'
 	
 	logInfo("Action Complete.")
 	
@@ -428,7 +434,7 @@ End Function
 Function wuDownloadWrapper(objSearchResults)
 
 	Dim downloadResults
-
+	
 	Dim Ex
 	On Error Resume Next
 		If (WUF_ASYNC = 1) Then
@@ -439,7 +445,6 @@ Function wuDownloadWrapper(objSearchResults)
 	Set Ex = New ErrWrap.catch() 'catch
 	On Error GoTo 0
 	If (Ex.number <> 0) Then
-		'@TODO review this behavior
 		If (Ex.number = cLng("&H80240024") ) Then
 			gResOut.recordDownloadFailure( "No updates to download." )
 		Else 
@@ -502,16 +507,18 @@ Function manualAction(intAction)
 	End If
 	
 	If (intUpdateCount > 0) Then
-		acceptEulas(searchResults) 'is this needed for downloads?
 		If ( (intAction and WUF_ACTION_DOWNLOAD) <> 0 ) Then
 			wuDownloadWrapper(searchResults)
 		End If
 		If ( (intAction and  WUF_ACTION_INSTALL) <> 0 ) Then
+			acceptEulas(searchResults)
 			wuInstallWrapper(searchResults)
 		End If
 	End If
 	
 	logDebug("Manual Action completed.")
+	
+	Set manualAction = searchResults
 	
 End Function
 
@@ -549,13 +556,12 @@ End Function
 Function wuSearch(strFilter) 'return ISearchResult
 	Dim searchResult
 	Dim updateSearcher 
-	Dim blnFatal
 	
 	logDebug("Creating Update Searcher.")
 	Set updateSearcher = gObjUpdateSession.CreateUpdateSearcher()
 	
 	logDebug("Update Server Selection = " & updateSearcher.serverSelection)
-	logDebug("Update Server Service ID = " & updateSearcher.serviceID)
+	'logDebug("Update Server Service ID = " & updateSearcher.serviceID)
 	
 	logInfo("Starting Update Search.")
 	
@@ -565,32 +571,42 @@ Function wuSearch(strFilter) 'return ISearchResult
 	Set Ex = New ErrWrap.catch() 'catch
 	On Error GoTo 0
 	If (Ex.number <> 0) Then
+		Dim strDsc
 		Dim strMsg
 		If (Ex = cLng("&H80072F78") ) Then
-			strMsg = "ERROR_HTTP_INVALID_SERVER_RESPONSE - The server response could not be parsed."
+			strDsc = "ERROR_HTTP_INVALID_SERVER_RESPONSE - The server response could not be parsed."
+			strMsg = "The server response could not be parsed."
 		ElseIf (Ex = cLng("&H8024402C") ) Then
-			strMsg = "WU_E_PT_WINHTTP_NAME_NOT_RESOLVED - Winhttp SendRequest/ReceiveResponse failed with 0x2ee7 error. Either the proxy " _
+			strDsc = "WU_E_PT_WINHTTP_NAME_NOT_RESOLVED - Winhttp SendRequest/ReceiveResponse failed with 0x2ee7 error. Either the proxy " _
 			& "server or target server name can not be resolved. Corresponds to ERROR_WINHTTP_NAME_NOT_RESOLVED. " 
+			strMsg = "Update server name could nto be resolved."
 		ElseIf (Ex = cLng("&H80072EFD") ) Then 
-			strMsg = "ERROR_INTERNET_CANNOT_CONNECT - The attempt to connect to the server failed."
+			strDsc = "ERROR_INTERNET_CANNOT_CONNECT - The attempt to connect to the server failed."
+			strMsg = "Unable to connect to udpate server"
 		ElseIf (Ex = cLng("&H8024401B") ) Then 
-			strMsg = "SUS_E_PT_HTTP_STATUS_PROXY_AUTH_REQ - Http status 407 - proxy authentication required" 
+			strDsc = "SUS_E_PT_HTTP_STATUS_PROXY_AUTH_REQ - Http status 407 - proxy authentication required" 
+			strMsg = "407 Proxy Authentication is required."
 		ElseIf (Ex = cLng("&H8024002B") ) Then 
-			strMsg = "WU_E_LEGACYSERVER - The Sus server we are talking to is a Legacy Sus Server (Sus Server 1.0)"
+			strDsc = "WU_E_LEGACYSERVER - The Sus server we are talking to is a Legacy Sus Server (Sus Server 1.0)"
+			strMsg = "Legacy SUS servers are not supported."
 		ElseIf (Ex = cLng("&H80244018") ) Then 
-			strMsg = "SUS_E_PT_HTTP_STATUS_FORBIDDEN HttProxy Status 403"
+			strDsc = "SUS_E_PT_HTTP_STATUS_FORBIDDEN HttProxy Status 403"
+			strMsg = "Server returned 403 Forbidden"
 		ElseIf (Ex = cLng("&H80072F8F") ) Then 
-			strMsg = "ERROR_INTERNET_SECURE_FAILURE ErrorClockWrong - Unable to establish secure connection due to clock sync issue"
+			strDsc = "ERROR_INTERNET_SECURE_FAILURE ErrorClockWrong"
+			strMsg = "Unable to establish secure connection due to clock sync issue."
+		ElseIf (Ex = cLng("&H80240032") ) Then 
+			strDsc = "WU_E_INVALID_CRITERIA - Invalid Criteria String"
+			strMsg = "Invalid Criteria String"
 		ElseIf (Ex = 7) Then 
-			strMsg = "Out of memory - In most cases, this error will be resolved by rebooting the client." 
+			strDsc = "Out of memory - In most cases, this error will be resolved by rebooting the client." 
 		Else
 			Dim strAddr
-			strAddr = "http://msdn.microsoft.com/en-us/library/windows/desktop/ms681381(v=vs.85).aspx "
-			strMsg = "Unknown problem searching for updates, refer to " & strAddr & "to look up error number." 
-			blnFatal = true
+			strDsc = "Unknown problem searching for updates." 
 		End If
-		call logErrorEx(strMsg,Ex)
-		Err.Raise Ex.Number, Ex.Source, Ex.Description
+		gResOut.recordError(strMsg)
+		call logErrorEx("Search Problem", Ex)
+		Err.Raise WUF_SEARCH_ERROR, Ex.Source & "; wuSearch()", Ex.Description & "; " & strDsc
 	End If
 	
 	If ( isObject( searchResult ) ) Then
@@ -598,6 +614,7 @@ Function wuSearch(strFilter) 'return ISearchResult
 	Else
 		wuSearch = null
 	End If
+	
 End Function
 
 '*******************************************************************************
@@ -613,16 +630,8 @@ Function wuDownload(objSearchResult)
 	
 	logInfo("Downloading updates")
 	
-	On Error Resume Next
-		Set objDownloadResult = downloader.Download()
-	Dim Ex
-	Set Ex = New ErrWrap.catch() 'catch
-	On Error GoTo 0
-	If (Ex.number <> 0) Then
-		Err.Raise Ex.Number, Ex.Source & "; wuDownload()", Ex.Description
-	End if
-	
-	
+	Set objDownloadResult = downloader.Download()
+
 	If Not( isObject(objDownloadResult) ) Then
 		wuDownload = null
 	Else
@@ -648,16 +657,9 @@ Function wuDownloadAsync(objSearchResult)
 	downloader.Updates = updates
 	
 	logInfo("Downloading Updates Asynchronously")
-	
-	Dim Ex
-	On Error Resume Next
-		Set dlJob = downloader.beginDownload(gObjDummyDict.Item("DummyFunction"),gObjDummyDict.Item("DummyFunction"),vbNull)
-	Set Ex = New ErrWrap.catch() 'catch
-	On Error GoTo 0
-	If (Ex.number <> 0) Then
-		Err.Raise Ex.Number, Ex.Source & "; wuDownloadAsync()", Ex.Description
-	End If
-	
+
+	Set dlJob = downloader.beginDownload(gObjDummyDict.Item("DummyFunction"),gObjDummyDict.Item("DummyFunction"),vbNull)
+
 	Set dlProgress = dlJob.getProgress()
 	
 	While Not getAsyncWuOpComplete(updates, dlProgress)  
@@ -719,9 +721,10 @@ End Function
 
 '*******************************************************************************
 Function wuInstall(objSearchResult)
-	Dim Ex
 
 	Dim updatesToInstall
+	Dim installationResult
+	
 	Set updatesToInstall = objSearchResult.Updates
 	
 	gResOut.recordMissingDownloads( countMissingUpdates(objSearchResult) )
@@ -738,15 +741,8 @@ Function wuInstall(objSearchResult)
 	
 	logInfo("Installing updates.")
 	
-	Dim installationResult
-	On Error Resume Next	
-		Set installationResult = installer.Install()
-	Set Ex = New ErrWrap.catch() 'catch
-	On Error GoTo 0	
-	If (Ex.number <> 0) Then
-		Err.Raise Ex.Number, Ex.Source & "; wuInstall()", Ex.Description
-	End if
-	
+	Set installationResult = installer.Install()
+
 	If Not( isObject(installationResult) ) Then
 		wuInstall = null
 	Else
@@ -779,15 +775,8 @@ Function wuInstallAsync(objSearchResult)
 	
 	logInfo("Installing updates.")
 	
-	Dim Ex
-	On Error Resume Next
-		Set installJob = installer.beginInstall(gObjDummyDict.Item("DummyFunction"),gObjDummyDict.Item("DummyFunction"),vbNull)
-	Set Ex = New ErrWrap.catch() 'catch
-	On Error GoTo 0
-	If (Ex.number <> 0) Then
-		Err.Raise Ex.Number, Ex.Source & "; wuInstallAsync()", Ex.Description
-	End If
-	
+	Set installJob = installer.beginInstall(gObjDummyDict.Item("DummyFunction"),gObjDummyDict.Item("DummyFunction"),vbNull)
+
 	set installProgress = installJob.getProgress()
 	
 	While Not getAsyncWuOpComplete(installer.Updates, installProgress) 
@@ -848,10 +837,6 @@ Function logSearchResult(objSearchResults)
 		Set update = objSearchResults.Updates.Item(i)
 		Set objCategories = objSearchResults.Updates.Item(i).Categories
 		logInfo("Missing: " & objSearchResults.Updates.Item(i) )
-		Dim j
-		For j = 0 to objCategories.Count-1
-		  logDebug("--Category: " & objCategories.Item(j).Description)
-		Next
 	Next
 	
 End Function
@@ -860,14 +845,14 @@ End Function
 Function logDownloadResult(objUpdates, objDownloadResult)
 
 	If NOT (isObject(objDownloadResult) ) Then
-		logInfo( "No download result recorded." )
+		logInfo( "Download result not an object." )
 		Exit Function
 	End If
 
 	'Output results of install
 	logInfo( "Download Result Code: " & objDownloadResult.ResultCode )
 	
-	logInfo( "Indvidual Update Download Results" )
+	logInfo( "Indvidual Update Download Results..." )
 	Dim i
 	For i = 0 to objUpdates.Count - 1
 		Dim strResult
@@ -881,15 +866,15 @@ End Function
 Function logInstallationResult(objUpdates, objInstallationResult)
 
 	If NOT (isObject(objInstallationResult) ) Then
-		logInfo("No installation result recorded.")
+		logInfo("Installation result not and object.")
 		Exit Function
 	End If
 
 	'Output results of install
-	logInfo("Installation Result Code: " & objInstallationResult.ResultCode )
-	logInfo("Reboot Required?: " & objInstallationResult.RebootRequired )
+	logInfo( "Installation Result Code: " & objInstallationResult.ResultCode )
+	logInfo( "Reboot Required?: " & objInstallationResult.RebootRequired )
 	
-	logInfo("Indvidual Update Installation Results")
+	logInfo( "Indvidual Update Installation Results..." )
 	Dim i
 	For i = 0 to objUpdates.Count - 1
 		Dim strResult
@@ -960,7 +945,7 @@ Function checkUpdateAgent() 'returns boolean (true if version is ok)
 	On Error GoTo 0
 	If (Ex.number <> 0) Then
 		logError( "Unable to get Agent Info object, perhaps windows updates haven't been configured?" )
-		Err.Raise Ex.Number, Ex.Source & "; checkUpdateAgent()", Ex.Description
+		Err.Raise Ex.Number, Ex.Source & "; checkUpdateAgent()", Ex.Description & "; AgentInfo not available"
 	End If
 
 	autoUpdateSettings = objAgentInfo.GetInfo("ProductVersionString")
@@ -1023,11 +1008,6 @@ Function sendFile(strSourceLocation, strDestLocation)
 	objSourceFile.close
 	sendFile = true
 
-End Function
-
-'*******************************************************************************
-Function getDateTimeStamp()
-	getDateTimeStamp = getDateStamp() & "_" & getTimeStamp()
 End Function
 
 '*******************************************************************************
@@ -1239,8 +1219,6 @@ Function logLocalWuSettings()
 
 End Function
 
-
-
 '**************************************************************************************
 Function logEnvironment()
 	Dim objArgs, strArguments
@@ -1283,12 +1261,18 @@ Function autoDetect()
 	Dim autoUpdateClient
 	Set autoUpdateClient = CreateObject("Microsoft.Update.AutoUpdate")
 	logDebug("Attempting to call Windows Auto Update DetectNow method.")
-	On Error Resume Next
+
+	Dim Ex
+	On Error Resume Next' try
 		autoUpdateClient.detectnow()
-		If (err <> 0) then 
-			call errorHandlerErr("Windows Update Auto Detection failed: ", true, err)
+	Set Ex = New ErrWrap.catch() 'catch
+	On Error GoTo 0
+	If (Ex.number <> 0) Then
+		If ( Ex.number = cLng("&H8024A000") ) Then
+			Err.Raise Ex.number, Ex.source & "; autoDetect()", Ex.description & "; WU Service Not Running"
 		End If
-	on error goto 0 
+		Err.Raise Ex.number, Ex.source & "; autoDetect()", Ex.description
+	End If
 End Function
 
 '**************************************************************************************
@@ -1494,6 +1478,30 @@ Class psuedoTee
 	End Sub
 End Class
 
+'===============================================================================
+'===============================================================================
+Class ResultPill
+	Dim strPillDir
+	Dim strPillPattern
+	Dim strPillLocation
+	Dim fPill
+	
+	Function init(strPillDir, strPillPattern)
+	
+		Me.strPillDir = strPillDir
+		Me.strPillPattern = strPillPattern
+		
+		Set init = Me
+		
+	End Function	
+	
+	Private Function generatePillName(objSearchResult) 'IUpdateSearchResult -> String
+		
+	End Function
+	
+	
+End Class
+
 
 '===============================================================================
 '===============================================================================
@@ -1517,13 +1525,14 @@ Class ResultWriter
 	
 		Dim shadowStream
 	
-		Set shadowStream = New ShadowedFileOutputStreamWriter.init(strResultLocation,strShadowLocation)
+		Set shadowStream = New ShadowedFileOutputStreamWriter.init(strResultLocation, _
+			strShadowLocation)
 		
 		Set stream = New psuedoTee.init(shadowStream)
 	End Function
 	
 	'---------------------------------------------------------------------------------
-	Function recordUpdates( objSearchResults )
+	Function recordUpdateList( objSearchResults )
 		
 		Dim searchList
 		searchList = ""
@@ -1556,7 +1565,7 @@ Class ResultWriter
 		stream.writeLine( getPair( "search.result.code", _
 			getOperationResultMsg( objSearchResults.ResultCode) ) )
 		
-		recordUpdates(objSearchResults)
+		recordUpdateList(objSearchResults)
 	End Function
 	
 	'---------------------------------------------------------------------------------
@@ -1868,7 +1877,7 @@ End Class
 ' This section supports try-catch&throw functionality in vbscript.
 ' You should only surround one exception throwing command with this
 ' construct, otherwise you might lose the error.
-' You must use this format in your code to simulate a try catch
+' The usage idiom is:
 ' On Error Resume Next 'try
 ' 	... 'code that could throw exception
 ' Set Ex = New ErrWrap.catch() 'catch
@@ -1877,29 +1886,54 @@ End Class
 ' 	... 'Handle error
 ' End If
 
+' Note that code called within an error handler that re-throws (using Err.raise)
+' must be "exception raise safe" all the way up the call chain.
+' If your called function has an "On Error..." statement in it, that will reset
+' The global Err object, thereby losing the exception the code was handling. When
+' The raise is called at the end of the handling to re-throw, it will throw an
+' "non-error" Err object with code 0, which will then slip by any upstream
+' error handlers. A nightmare to debug if it happens.
+
 Class ErrWrap
 	Private pNumber
 	Private pSource
 	Private pDescription
 	Private pHelpContext
 	Private pHelpFile
+	Private objReasonEx
 	
 	Public Function catch()
+		init()		
+		objReasonEx = NULL
+		Set catch = Me
+	End Function
+	
+	Public Function init()
 		pNumber = Err.Number
 		pSource = Err.Source
 		pDescription = Err.Description
 		pHelpContext = Err.HelpContext
 		pHelpFile = Err.HelpFile		
-		Set catch = Me
+		Set init = Me
 	End Function
 	
-	Public Function Newk(strSource, ErrWrap)
-		pNumber = ErrWrap.Number
-		pSource = strSource & "->" & ErrWrap.Source
-		pDescription = ErrWrap.Description
-		pHelpContext = ErrWrap.HelpContext
-		pHelpFile = ErrWrap.HelpFile
-		Set Newk = Me
+	Public Function initM(intCode, strSource, strDescription)
+		pNumber = intCode
+		pSource = strSource
+		pDescription = strDescription
+		pHelpContext = ""
+		pHelpFile = ""		
+		Set initM = Me
+	End Function
+	
+	Public Function initEx(objEx)
+		pNumber = Err.Number
+		pSource = Err.Source
+		pDescription = Err.Description
+		pHelpContext = Err.HelpContext
+		pHelpFile = Err.HelpFile
+		objReasonEx = objReasonEx
+		Set initEx = Me
 	End Function
 	
 	Public Default Property Get Number
@@ -1915,7 +1949,7 @@ Class ErrWrap
 	End Property
 	
 	Public Property Get HelpContext
-		HelpContext = pHelpContext
+		HelpContext = pHelpContextl
 	End Property
 	
 	Public Property Get HelpFile
