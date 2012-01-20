@@ -56,6 +56,11 @@ Const WUF_FEEDBACK_ERROR = 10002
 Const WUF_NO_UPDATES = 10003
 Const WUF_INVALID_CONFIGURATION = 10004
 Const WUF_SEARCH_ERROR = 10005
+Const WUF_DOWNLOAD_ERROR = 10006
+Const WUF_INSTALL_ERROR = 10007
+Const WUF_GENERIC_ERROR = 10008
+Const WUF_VERIFY_ERROR = 10009
+Const WUF_STREAM_ERROR = 10010
 
 Const WUF_ACTION_UNDEFINED = 0
 Const WUF_ACTION_AUTO = 	1
@@ -93,6 +98,8 @@ Dim gObjDummyDict	'Used for async wu operations
 Dim gResOut			'Result writer
 Dim e				'Exception manager
 
+Set e = New ExceptionManager.init()
+
 Class DummyClass 'set up dummy class for async download and installation calls
 	Public Default Function DummyFunction()
 	
@@ -115,27 +122,29 @@ Function main()
 	If (WUF_CATCH_ALL_EXCEPTIONS = 1) Then
 		On Error Resume Next
 			core()
-		Dim Ex
-		Set Ex = New ErrWrap.catch() 'catch
+		e.catch() 'catch
 		On Error GoTo 0
-		If (Ex.number <> 0) Then
+		If (e.isException()) Then
+			Dim Ex
+			Set Ex = e.getException()
 			Dim strMsg
 			If Ex.number = cLng(&H80240044) Then
 				strMsg = "Insufficient access, try running as administrator." 
 				gResOut.recordError( strMsg )
-				call logErrorEx( strMsg, Ex )
+				'call logErrorEx( strMsg, Ex )
 			ElseIf (Ex.number = WUF_INPUT_ERROR) Then
-				gResOut.recordError( "Improper input." )
+				gResOut.recordError( "Improper input, " & Ex.Description )
 				gResOut.recordInfo( WUF_USAGE )
-				call logError("Improper input.")
+				'call logError("Improper input.")
 			ElseIf  (Ex.number = WUF_INVALID_CONFIGURATION ) Then
 				gResOut.recordError( "Invalid Configuration, " & Ex.Description )
 				gResOut.recordInfo( WUF_USAGE )
-				call logError("Invalid config.")
+				'call logError("Invalid config.")
 			ElseIf  (Ex.number = WUF_SEARCH_ERROR ) Then
 				gResOut.recordError( "Search Problem, " & Ex.Description )
-				call logErrorEx( "Invalid config.", Ex )
+				'call logErrorEx( "Search Problem.", Ex )
 			Else
+				logError( e.dump(Ex) )
 				gResOut.recordError(Ex.Description)
 				call logErrorEx( "Exception occured during core execution.", Ex)
 			End If
@@ -200,17 +209,8 @@ Function configure()
 	call gResOut.writeTitle(APP_NAME, APP_VERSION)
 	call gResOut.writeId( gRunId ) 
 	
-	Dim Ex
-	On Error Resume Next
-		parseArgs()
-	Set Ex = New ErrWrap.catch() 'catch
-	On Error GoTo 0
-	If (Ex.number <> 0) Then
-		If (Ex.number = WUF_INPUT_ERROR) Then
-			Err.Raise Ex.number, Ex.source & "; configure()", Ex.description
-		End If
-	End If
-	
+	parseArgs()
+
 	logDebug("Creating Update Session.")
 	Set gObjUpdateSession = CreateObject("Microsoft.Update.Session")
 	
@@ -435,23 +435,30 @@ Function wuDownloadWrapper(objSearchResults)
 
 	Dim downloadResults
 	
-	Dim Ex
 	On Error Resume Next
 		If (WUF_ASYNC = 1) Then
 			Set downloadResults = wuDownloadAsync(objSearchResults)
 		Else
 			Set downloadResults = wuDownload(objSearchResults)
 		End If
-	Set Ex = New ErrWrap.catch() 'catch
+	e.catch() 'catch
 	On Error GoTo 0
-	If (Ex.number <> 0) Then
+	If (e.isException()) Then
+		Dim Ex
+		Set Ex = e.getException()
 		If (Ex.number = cLng("&H80240024") ) Then
-			gResOut.recordDownloadFailure( "No updates to download." )
+			'gResOut.recordDownloadFailure( "No updates to download." )
+			Dim newEx
+			Set newEx = e.preRaise( New ErrWrap.initExM( WUF_DOWNLOAD_ERROR, _
+				"wuDownloadWrapper()", "No updates to download" , Ex) )
+			Err.Raise newEx.number, newEx.Source, newEx.Description
 		Else 
-			gResOut.recordDownloadFailure( Ex.Description )
-			Err.Raise Ex.number, Ex.Source & "; wuDownloadWrapper()", Ex.Description
+			'gResOut.recordDownloadFailure( Ex.Description )
+			Dim newEx2
+			Set newEx2 = e.preRaise( New ErrWrap.initExM( WUF_DOWNLOAD_ERROR, _
+				"wuDownloadWrapper()", "Unexpected download problem." , Ex) )
+			Err.Raise newEx2.number, newEx2.Source, newEx2.Description
 		End If
-		Exit Function
 	End If		
 		
 	call logDownloadResult(objSearchResults.updates, downloadResults)
@@ -464,25 +471,29 @@ Function wuInstallWrapper(objSearchResults)
 
 	Dim installResults
 	
-	Dim Ex
 	On Error Resume Next
 		If (WUF_ASYNC = 1) Then
 			Set installResults = wuInstallAsync(objSearchResults)
 		Else
 			Set installResults = wuInstall(objSearchResults)
 		End IF
-	Set Ex = New ErrWrap.catch() 'catch
+	e.catch() 'catch
 	On Error GoTo 0
-	If (Ex.number <> 0) Then
-		'@TODO review this behavior
+	If (e.isException()) Then
+		Dim Ex
+		Set Ex = e.getException()
 		If (Ex.number = cLng("&H80240024") ) Then
-			gResOut.recordInstallFailure( "No updates to install" )
+			Dim newEx
+			Set newEx = e.preRaise( New ErrWrap.initExM( WUF_INSTALL_ERROR, _
+				"wuDownloadWrapper()", "No updates to install" , Ex) )
+			Err.Raise newEx.number, newEx.Source, newEx.Description
 		Else 
-			gResOut.recordInstallFailure( Ex.Description )
-			Err.Raise Ex.number, Ex.Source & "; wuInstallWrapper()", Ex.Description
+			Dim newEx2
+			Set newEx2 = e.preRaise( New ErrWrap.initExM( WUF_INSTALL_ERROR, _
+				"wuDownloadWrapper()", "Unexpected install problem." , Ex) )
+			Err.Raise newEx2.number, newEx2.Source, newEx2.Description
 		End If
-		Exit Function
-	End If
+	End If		
 
 	call logInstallationResult(objSearchResults.updates,installResults)
 	call gResOut.recordInstallationResult(objSearchResults.updates, installResults )
@@ -565,12 +576,13 @@ Function wuSearch(strFilter) 'return ISearchResult
 	
 	logInfo("Starting Update Search.")
 	
-	Dim Ex
 	On Error Resume Next
 		Set searchResult = updateSearcher.Search(strFilter)
-	Set Ex = New ErrWrap.catch() 'catch
+	e.catch() 'catch
 	On Error GoTo 0
-	If (Ex.number <> 0) Then
+	If ( e.isException() ) Then
+		Dim Ex
+		Set Ex = e.getException()
 		Dim strDsc
 		Dim strMsg
 		If (Ex = cLng("&H80072F78") ) Then
@@ -600,13 +612,15 @@ Function wuSearch(strFilter) 'return ISearchResult
 			strMsg = "Invalid Criteria String"
 		ElseIf (Ex = 7) Then 
 			strDsc = "Out of memory - In most cases, this error will be resolved by rebooting the client." 
+			strMsg = "Out of Memory"
 		Else
 			Dim strAddr
 			strDsc = "Unknown problem searching for updates." 
 		End If
-		gResOut.recordError(strMsg)
-		call logErrorEx("Search Problem", Ex)
-		Err.Raise WUF_SEARCH_ERROR, Ex.Source & "; wuSearch()", Ex.Description & "; " & strDsc
+		Dim newEx
+		Set newEx = e.preRaise( New ErrWrap.initExM(WUF_SEARCH_ERROR, _
+			"wuSearch()", strMsg, Ex) )
+		Err.Raise newEx.number , newEx.Source, newEx.Description
 	End If
 	
 	If ( isObject( searchResult ) ) Then
@@ -709,12 +723,13 @@ End Function
 
 '*******************************************************************************
 Function forceInstallerQuiet(objInstaller)
-	Dim Ex
 	On Error Resume Next
 		objInstaller.ForceQuiet = True 
-	Set Ex = New ErrWrap.catch() 'catch
+	e.catch() 'catch
 	On Error GoTo 0
-	If (Ex.number <> 0) Then
+	If (e.isException()) Then
+		Dim Ex
+		Set Ex = e.getException()
 		call logErrorEx("Could not force installer to be quiet.", Ex)
 	End If
 End Function
@@ -938,14 +953,19 @@ Function checkUpdateAgent() 'returns boolean (true if version is ok)
 	logDebug("Checking version of Windows Update agent against version " _
 	& WU_AGENT_VERSION & "...")
 	
-	Dim Ex
 	On Error Resume Next
 		Set objAgentInfo = CreateObject("Microsoft.Update.AgentInfo") 
-	Set Ex = New ErrWrap.catch() 'catch
+	e.catch() 'catch
 	On Error GoTo 0
-	If (Ex.number <> 0) Then
-		logError( "Unable to get Agent Info object, perhaps windows updates haven't been configured?" )
-		Err.Raise Ex.Number, Ex.Source & "; checkUpdateAgent()", Ex.Description & "; AgentInfo not available"
+	If (e.isException()) Then
+		Dim Ex
+		Set Ex = e.getException()
+		Dim strMsg
+		strMsg = "Unable to get Agent Info object, perhaps windows updates haven't been configured?"
+		Dim newEx
+		Set newEx = e.preRaise( New ErrWrap.initExM( WUF_VERIFY_ERROR, _
+			"checkUpdateAgent()", strMsg , Ex) )
+		Err.Raise newEx.number, newEx.Source, newEx.Description
 	End If
 
 	autoUpdateSettings = objAgentInfo.GetInfo("ProductVersionString")
@@ -960,53 +980,6 @@ Function checkUpdateAgent() 'returns boolean (true if version is ok)
 		logError("File version (" & autoUpdateSettings & ") does not match. Windows Update Agent 2.0 required.") 
 		checkUpdateAgent = False
 	End If 
-
-End Function
-
-'*******************************************************************************
-Function sendFile(strSourceLocation, strDestLocation)
-	Dim objFSO, objDestFile
-	Dim strPath, strFullName
-	Dim objFolder
-	Dim objSourceFile
-	Dim strMessage
-	Dim strMsg
-	
-	Set objFSO = CreateObject("Scripting.FileSystemObject")
-
-	sendFile = false
-
-	Set objSourceFile = objFSO.OpenTextFile (strSourceLocation, FORREADING, False, -2)
-	
-	Dim Ex
-	On Error Resume Next' try
-		strMessage = objSourceFile.readAll 
-	Set Ex = New ErrWrap.catch() 'catch
-	On Error GoTo 0
-	If (Ex.number <> 0) Then
-		strMsg = "Unable to read local file for sending to dropbox: " & strSourceLocation
-		If (Ex.number = 62) Then
-			call logWarnEx(strMsg, Ex)
-		Else
-			call logErrorEx(strMsg, Ex)
-			Err.Raise Ex.number,  Ex.Source & "; sendFile()", Ex.Description & "; " & strMsg
-		End If
-	End If
-	'End try-catch
-	
-	On Error Resume Next 'try
-		Set objDestFile = objFSO.OpenTextFile(strDestLocation,FORWRITING,True)
-	Set Ex = New ErrWrap.catch() 'catch
-	On Error GoTo 0
-	If (Ex.number <> 0) Then
-		strMsg = "Could not open destination file: " & strDestLocation
-		Err.Raise Ex.number,  Ex.Source & "; sendFile()", Ex.Description & "; " & strMsg
-	End If
-	
-	objDestFile.write(strMessage)
-	objDestFile.close
-	objSourceFile.close
-	sendFile = true
 
 End Function
 
@@ -1262,16 +1235,23 @@ Function autoDetect()
 	Set autoUpdateClient = CreateObject("Microsoft.Update.AutoUpdate")
 	logDebug("Attempting to call Windows Auto Update DetectNow method.")
 
-	Dim Ex
 	On Error Resume Next' try
 		autoUpdateClient.detectnow()
-	Set Ex = New ErrWrap.catch() 'catch
+	e.catch() 'catch
 	On Error GoTo 0
-	If (Ex.number <> 0) Then
+	If (e.isException()) Then
+		Dim Ex
+		Set Ex = e.getException()
 		If ( Ex.number = cLng("&H8024A000") ) Then
-			Err.Raise Ex.number, Ex.source & "; autoDetect()", Ex.description & "; WU Service Not Running"
+			Dim newEx
+			Set newEx = e.preRaise( New ErrWrap.initExM(WUF_GENERIC_ERROR, _
+			"autoDetect()", "WU Service Not Running", Ex) )
+			Err.Raise newEx.number , newEx.Source, newEx.Description
 		End If
-		Err.Raise Ex.number, Ex.source & "; autoDetect()", Ex.description
+		Dim newEx2
+		Set newEx2 = e.preRaise( New ErrWrap.initExM(WUF_GENERIC_ERROR, _
+		"autoDetect()", "", Ex) )
+		Err.Raise newEx2.number, newEx2.source, newEx2.description
 	End If
 End Function
 
@@ -1313,14 +1293,14 @@ Function logEntry(intType, strMsg)
 	
 	strLine = "[" & time & "] - " & getLogTypeLabel(intType) & " - " & strMsg
 	
-	Dim preEx, Ex
-	Set preEx = New ErrWrap.catch() 'catch existing exception
 	On Error Resume Next
 		gFileLog.writeline strLine
-	Set Ex = New ErrWrap.catch() 'catch
+	e.catch() 'catch
 	On Error GoTo 0
-	If (err <> 0) Then
-		stdErr.writeLine "{LOG ERROR} Unable to write to log file. " & getFormattedErrorMsg( Err )
+	If (e.isException()) Then
+		Dim Ex
+		Set Ex = e.getException()
+		stdErr.writeLine "{LOG ERROR} Unable to write to log file. " & getFormattedErrorMsg( Ex )
 	End If
 	
 	If (isCScript()) Then 
@@ -1329,9 +1309,6 @@ Function logEntry(intType, strMsg)
 		End If
 	End If
 	
-	If (preEx.number <> 0) Then
-		Err.Raise preEx.number, preEx.source, preEx.Description
-	End If
 End Function
 
 '******************************************************************************
@@ -1529,6 +1506,7 @@ Class ResultWriter
 			strShadowLocation)
 		
 		Set stream = New psuedoTee.init(shadowStream)
+		
 	End Function
 	
 	'---------------------------------------------------------------------------------
@@ -1611,14 +1589,14 @@ Class ResultWriter
 	End Function
 	
 	'---------------------------------------------------------------------------------
-	Function recordDownloadStatus(objDlProgress, objUpdates)
+	Function recordDownloadStatus( objDlProgress, objUpdates )
 		reWrite("                                                                              ")
 		reWrite( "download.status" & getTotalUpdateDownloadProgress(objDlProgress,objUpdates) & _
 			":" & getCurrentUpdateDownloadProgress(objDlProgress,objUpdates) )
 	End Function
 	
 	'---------------------------------------------------------------------------------
-	Function recordInstallStatus(objInstallProgress, objUpdates)
+	Function recordInstallStatus( objInstallProgress, objUpdates )
 		reWrite("                                                                               ")
 		reWrite( "install.status" & getTotalUpdateInstallProgress(objInstallProgress,objUpdates) & _
 			":" & getCurrentUpdateInstallProgress(objInstallProgress,objUpdates) )
@@ -1799,6 +1777,7 @@ Class ShadowedFileOutputStreamWriter
 	
 	'Custom Constructor - Take filename and shadow location
 	Function init(strOutputLocation, strShadowLocation)
+	
 		
 		Me.strOutputLocation = strOutputLocation
 		Me.strShadowLocation = strShadowLocation
@@ -1812,15 +1791,18 @@ Class ShadowedFileOutputStreamWriter
 	End Function
 	
 	Function tryCreateFile(strOutputLocation)
-		Dim Ex
 		On Error Resume Next
 			Set tryCreateFile = fso.createTextFile( strOutputLocation, True )
-		Set Ex = New ErrWrap.catch() 'catch
+		e.catch() 'catch
 		On Error GoTo 0
-		If (Ex.number <> 0) Then
-			Err.Raise Ex.number, Ex.Source & _
-				"; ShadowedFileOutputStreamWriter.tryCreateFile()", _
-				Ex.Description & "; Unable to write to file: " & strOutputLocation
+		If (e.isException()) Then
+			Dim Ex
+			Set Ex = e.getException()
+			Dim newEx
+			Set newEx = e.preRaise( New ErrWrap.initExM( WUF_STREAM_ERROR, _
+				"ShadowedFileOutputStreamWriter.tryCreateFile()",_
+				"Unable to write to file: " & strOutputLocation , Ex) )
+			Err.Raise newEx.number, newEx.Source, newEx.Description
 		End If
 	End Function
 	
@@ -1867,7 +1849,7 @@ Class ShadowedFileOutputStreamWriter
 	End Function
 	
 	Sub Class_Terminate()
-		close()
+		'close()
 	End Sub
 End Class
 
@@ -1877,13 +1859,16 @@ End Class
 ' This section supports try-catch&throw functionality in vbscript.
 ' You should only surround one exception throwing command with this
 ' construct, otherwise you might lose the error.
-' The usage idiom is:
+' The usage idiom for a tr-catch-throw is:
 ' On Error Resume Next 'try
 ' 	... 'code that could throw exception
-' Set Ex = New ErrWrap.catch() 'catch
+' Set Ex = e.catch() 'catch
 ' On Error GoTo 0 'catch part two
 ' If (Ex = <some_err_num>) Then
 ' 	... 'Handle error
+'	Set newEx = New ErrWrap.initExM(<somenum>,"<source>", "<description>", Ex)'
+'	e.preRaise(newEx)
+'	Err.Raise newEx.number, newEx.source, newEx.description
 ' End If
 
 ' Note that code called within an error handler that re-throws (using Err.raise)
@@ -1913,7 +1898,8 @@ Class ErrWrap
 		pSource = Err.Source
 		pDescription = Err.Description
 		pHelpContext = Err.HelpContext
-		pHelpFile = Err.HelpFile		
+		pHelpFile = Err.HelpFile
+		objReasonEx = NULL
 		Set init = Me
 	End Function
 	
@@ -1926,14 +1912,39 @@ Class ErrWrap
 		Set initM = Me
 	End Function
 	
+	Public Function initExM(intCode, strSource, strDescription, objEx)
+		pNumber = intCode
+		pSource = strSource
+		pDescription = strDescription
+		pHelpContext = ""
+		pHelpFile = ""		
+		Set objReasonEx = objEx
+		Set initExM = Me
+	End Function
+	
 	Public Function initEx(objEx)
 		pNumber = Err.Number
 		pSource = Err.Source
 		pDescription = Err.Description
 		pHelpContext = Err.HelpContext
 		pHelpFile = Err.HelpFile
-		objReasonEx = objReasonEx
+		Set objReasonEx = objEx
 		Set initEx = Me
+	End Function
+	
+	Public Function getReason() 'returns objEx
+		If NOT isObject(objReasonEx) Then
+			getReason = NULL
+		Else
+			Set getReason = objReasonEx
+		End If
+	End Function
+	
+	Public Function toString() 'returns string
+		toString = ""
+		toString = "ExNum:[" & pNumber & " : 0x" & hex(pNumber) & "] " & VbCrLf & _
+			"ExSource: " & pSource & VbCrLf & _
+			"ExDescription: " & pDescription & VbCrLf
 	End Function
 	
 	Public Default Property Get Number
@@ -1956,4 +1967,69 @@ Class ErrWrap
 		HelpFile = HelpFile
 	End Property
 	
+End Class
+
+'===============================================================================
+'===============================================================================
+' Usage: declare this at the glocal scope.
+Class ExceptionManager
+	Dim currentEx
+	
+	Function init()
+		currentEx = NULL
+		Set init = Me
+	End Function
+	
+	Function catch()
+		If ( isNull(currentEx) ) Then
+			If ( Err.number <> 0 ) Then
+				Set currentEx = New ErrWrap.catch()
+			End If
+		Else
+			If (Err.number <> currentEx.number) Then
+				'Exception mismatch, when the current exception
+				'does not match the last recorded currentEx.
+				'Happens when an exception is thrown in an 
+				'exception handlerl
+				If ( Err.number <> 0 ) Then
+					Set currentEx = New ErrWrap.initEx(currentEx)
+				End IF
+			End If
+			catch = true
+		End If
+		
+	End Function
+	
+	Function isException()
+		isException = true
+		If NOT ( isObject(currentEx) )Then
+			isException = false
+		End If
+	End Function
+	
+	Function getException()
+		Set getException = currentEx
+		currentEx = NULL
+	End Function
+	
+	' Do not use if you care about localizing the line number of the error
+	' This function will set the error line to the Raise called within
+	Function throw(objEx)
+		Set currentEx = objEx
+		Err.Raise currentEx.number, currentEx.Source, currentEx.Description
+	End Function
+	
+	Function preRaise(objEx)
+		Set currentEx = objEx
+		Set preRaise = currentEx
+	End Function
+	
+	Function dump(objEx)
+		dump = ""
+		If NOT (isObject(objEx.getReason)) Then
+			dump = objEx.toString() & VbCrLf
+		Else
+			dump = dump(objEx.getReason) & objEx.toString() & VbCrLf
+		End If
+	End Function
 End Class
