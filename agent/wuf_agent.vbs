@@ -23,8 +23,8 @@ Option Explicit
 'Settings------------------------------
 Const LOG_LEVEL = 3
 Const VERBOSE_LEVEL = 2
-Const WUF_CATCH_ALL_EXCEPTIONS = 1
-Const WUF_ASYNC = 1
+Const WUF_CATCH_ALL_EXCEPTIONS = 0
+Const WUF_ASYNC = TRUE
 Const WUF_SHUTDOWN_DELAY = 60
 '--------------------------------------
   
@@ -128,25 +128,31 @@ Function main()
 			Dim Ex
 			Set Ex = e.getException()
 			Dim strMsg
-			If Ex.number = cLng(&H80240044) Then
+			If Ex.number = cLng("&H80240044") Then
 				strMsg = "Insufficient access, try running as administrator." 
 				gResOut.recordError( strMsg )
-				'call logErrorEx( strMsg, Ex )
 			ElseIf (Ex.number = WUF_INPUT_ERROR) Then
 				gResOut.recordError( "Improper input, " & Ex.Description )
 				gResOut.recordInfo( WUF_USAGE )
-				'call logError("Improper input.")
 			ElseIf  (Ex.number = WUF_INVALID_CONFIGURATION ) Then
 				gResOut.recordError( "Invalid Configuration, " & Ex.Description )
 				gResOut.recordInfo( WUF_USAGE )
-				'call logError("Invalid config.")
 			ElseIf  (Ex.number = WUF_SEARCH_ERROR ) Then
 				gResOut.recordError( "Search Problem, " & Ex.Description )
-				'call logErrorEx( "Search Problem.", Ex )
-			Else
 				logError( e.dump(Ex) )
+			ElseIf  (Ex.number = WUF_DOWNLOAD_ERROR ) Then
+				gResOut.recordError( "Search Problem, " & Ex.Description )
+				logError( e.dump(Ex) )
+			ElseIf  (Ex.number = WUF_INSTALL_ERROR ) Then
+				gResOut.recordError( "Install Problem, " & Ex.Description )
+				logError( e.dump(Ex) )
+			ElseIf  (Ex.number = WUF_STREAM_ERROR ) Then
+				gResOut.recordError( "Stream access problem, " & Ex.Description )
+				logError( e.dump(Ex) )
+			Else
 				gResOut.recordError(Ex.Description)
-				call logErrorEx( "Exception occured during core execution.", Ex)
+				logError( e.dump(Ex) )
+				'call logErrorEx( "Unhandled exception: ", Ex)
 			End If
 			cleanup()
 		End If
@@ -431,35 +437,52 @@ Function doAction(intAction)
 End Function
 
 '*******************************************************************************
+Function wuDownloadOp(objSearchResults, booAsync)
+		If (booAsync) Then
+			Set wuDownloadOp = wuDownloadAsync(objSearchResults)
+		Else
+			Set wuDownloadOp = wuDownload(objSearchResults)
+		End If
+End Function
+
+'*******************************************************************************
+Function wuInstallOp(objSearchResults, booAsync)
+		If (booAsync) Then
+			Set wuInstallOp = wuInstallAsync(objSearchResults)
+		Else
+			Set wuInstallOp = wuInstall(objSearchResults)
+		End If
+End Function
+
+'*******************************************************************************
 Function wuDownloadWrapper(objSearchResults)
 
 	Dim downloadResults
-	
-	On Error Resume Next
-		If (WUF_ASYNC = 1) Then
-			Set downloadResults = wuDownloadAsync(objSearchResults)
-		Else
-			Set downloadResults = wuDownload(objSearchResults)
-		End If
-	e.catch() 'catch
-	On Error GoTo 0
-	If (e.isException()) Then
-		Dim Ex
-		Set Ex = e.getException()
-		If (Ex.number = cLng("&H80240024") ) Then
-			'gResOut.recordDownloadFailure( "No updates to download." )
+		
+	If (WUF_CATCH_ALL_EXCEPTIONS = 0) Then
+		On Error Resume Next
+			Set downloadResults = wuDownloadOp(WUF_ASYNC)
+		e.catch() 'catch
+		On Error GoTo 0
+		If (e.isException()) Then
+			Dim Ex, strMsg
+			Set Ex = e.getException()
+			
+			If (Ex.number = cLng("&H80240024") ) Then
+				strMsg = "No updates to download."
+			Else 
+				strMsg = "Unrecognized download exception."
+			End If
+			
 			Dim newEx
 			Set newEx = e.preRaise( New ErrWrap.initExM( WUF_DOWNLOAD_ERROR, _
 				"wuDownloadWrapper()", "No updates to download" , Ex) )
 			Err.Raise newEx.number, newEx.Source, newEx.Description
-		Else 
-			'gResOut.recordDownloadFailure( Ex.Description )
-			Dim newEx2
-			Set newEx2 = e.preRaise( New ErrWrap.initExM( WUF_DOWNLOAD_ERROR, _
-				"wuDownloadWrapper()", "Unexpected download problem." , Ex) )
-			Err.Raise newEx2.number, newEx2.Source, newEx2.Description
+			
 		End If
-	End If		
+	Else
+		Set downloadResults = wuDownloadOp(WUF_ASYNC)
+	End If
 		
 	call logDownloadResult(objSearchResults.updates, downloadResults)
 	call gResOut.recordDownloadResult(objSearchResults.updates, downloadResults)
@@ -471,29 +494,29 @@ Function wuInstallWrapper(objSearchResults)
 
 	Dim installResults
 	
-	On Error Resume Next
-		If (WUF_ASYNC = 1) Then
-			Set installResults = wuInstallAsync(objSearchResults)
-		Else
-			Set installResults = wuInstall(objSearchResults)
-		End IF
-	e.catch() 'catch
-	On Error GoTo 0
-	If (e.isException()) Then
-		Dim Ex
-		Set Ex = e.getException()
-		If (Ex.number = cLng("&H80240024") ) Then
-			Dim newEx
-			Set newEx = e.preRaise( New ErrWrap.initExM( WUF_INSTALL_ERROR, _
-				"wuDownloadWrapper()", "No updates to install" , Ex) )
-			Err.Raise newEx.number, newEx.Source, newEx.Description
-		Else 
-			Dim newEx2
-			Set newEx2 = e.preRaise( New ErrWrap.initExM( WUF_INSTALL_ERROR, _
-				"wuDownloadWrapper()", "Unexpected install problem." , Ex) )
-			Err.Raise newEx2.number, newEx2.Source, newEx2.Description
-		End If
-	End If		
+	If (WUF_CATCH_ALL_EXCEPTIONS = 0) Then
+		On Error Resume Next
+			Set installResults = wuInstallOp(WUF_ASYNC)
+		e.catch() 'catch
+		On Error GoTo 0
+		If (e.isException()) Then
+			Dim Ex
+			Set Ex = e.getException()
+			If (Ex.number = cLng("&H80240024") ) Then
+				Dim newEx
+				Set newEx = e.preRaise( New ErrWrap.initExM( WUF_INSTALL_ERROR, _
+					"wuDownloadWrapper()", "No updates to install" , Ex) )
+				Err.Raise newEx.number, newEx.Source, newEx.Description
+			Else 
+				Dim newEx2
+				Set newEx2 = e.preRaise( New ErrWrap.initExM( WUF_INSTALL_ERROR, _
+					"wuDownloadWrapper()", "Unexpected install problem." , Ex) )
+				Err.Raise newEx2.number, newEx2.Source, newEx2.Description
+			End If
+		End If		
+	Else
+		Set installResults = wuInstallOp(WUF_ASYNC)
+	End If
 
 	call logInstallationResult(objSearchResults.updates,installResults)
 	call gResOut.recordInstallationResult(objSearchResults.updates, installResults )
@@ -515,16 +538,27 @@ Function manualAction(intAction)
 		
 		logSearchResult( searchResults )
 		gResOut.recordSearchResult( searchResults )
-	End If
+			
+		Dim rp
+		Set rp = new ActiveResult.init(searchResults)
+		
+		gResOut.recordInfo("Pre-op=" & rp.generateSummary())
+		'call rp.writePill(getComputerName, "")
+		'TODO: add config options to get directory for pill
 	
-	If (intUpdateCount > 0) Then
-		If ( (intAction and WUF_ACTION_DOWNLOAD) <> 0 ) Then
-			wuDownloadWrapper(searchResults)
+		If (intUpdateCount > 0) Then
+			If ( (intAction and WUF_ACTION_DOWNLOAD) <> 0 ) Then
+				wuDownloadWrapper(searchResults)
+				gResOut.recordInfo("Post-op=" & rp.generateSummary())
+			End If
+			If ( (intAction and  WUF_ACTION_INSTALL) <> 0 ) Then
+				acceptEulas(searchResults)
+				wuInstallWrapper(searchResults)
+				gResOut.recordInfo("Post-op=" & rp.generateSummary())
+			End If
+			
 		End If
-		If ( (intAction and  WUF_ACTION_INSTALL) <> 0 ) Then
-			acceptEulas(searchResults)
-			wuInstallWrapper(searchResults)
-		End If
+	
 	End If
 	
 	logDebug("Manual Action completed.")
@@ -591,7 +625,7 @@ Function wuSearch(strFilter) 'return ISearchResult
 		ElseIf (Ex = cLng("&H8024402C") ) Then
 			strDsc = "WU_E_PT_WINHTTP_NAME_NOT_RESOLVED - Winhttp SendRequest/ReceiveResponse failed with 0x2ee7 error. Either the proxy " _
 			& "server or target server name can not be resolved. Corresponds to ERROR_WINHTTP_NAME_NOT_RESOLVED. " 
-			strMsg = "Update server name could nto be resolved."
+			strMsg = "Update server name could not be resolved."
 		ElseIf (Ex = cLng("&H80072EFD") ) Then 
 			strDsc = "ERROR_INTERNET_CANNOT_CONNECT - The attempt to connect to the server failed."
 			strMsg = "Unable to connect to udpate server"
@@ -610,12 +644,15 @@ Function wuSearch(strFilter) 'return ISearchResult
 		ElseIf (Ex = cLng("&H80240032") ) Then 
 			strDsc = "WU_E_INVALID_CRITERIA - Invalid Criteria String"
 			strMsg = "Invalid Criteria String"
+		ElseIf (Ex = cLng("&H8024001F") ) Then 
+			strDsc = "SUS_E_NO_CONNECTION"
+			strMsg = "No network connection available."
 		ElseIf (Ex = 7) Then 
 			strDsc = "Out of memory - In most cases, this error will be resolved by rebooting the client." 
 			strMsg = "Out of Memory"
 		Else
 			Dim strAddr
-			strDsc = "Unknown problem searching for updates." 
+			strMsg = "Unknown problem searching for updates." 
 		End If
 		Dim newEx
 		Set newEx = e.preRaise( New ErrWrap.initExM(WUF_SEARCH_ERROR, _
@@ -676,7 +713,7 @@ Function wuDownloadAsync(objSearchResult)
 
 	Set dlProgress = dlJob.getProgress()
 	
-	While Not getAsyncWuOpComplete(updates, dlProgress)  
+	While Not getAsyncWuOpJoinable(updates, dlJob)  
 		set dlProgress = dlJob.getProgress()
 		call gResOut.recordDownloadStatus(dlProgress, updates)
 		logInfo( "Download Progress: " & dlProgress.percentcomplete & "%" )
@@ -723,6 +760,7 @@ End Function
 
 '*******************************************************************************
 Function forceInstallerQuiet(objInstaller)
+
 	On Error Resume Next
 		objInstaller.ForceQuiet = True 
 	e.catch() 'catch
@@ -732,6 +770,7 @@ Function forceInstallerQuiet(objInstaller)
 		Set Ex = e.getException()
 		call logErrorEx("Could not force installer to be quiet.", Ex)
 	End If
+	
 End Function
 
 '*******************************************************************************
@@ -794,7 +833,7 @@ Function wuInstallAsync(objSearchResult)
 
 	set installProgress = installJob.getProgress()
 	
-	While Not getAsyncWuOpComplete(installer.Updates, installProgress) 
+	While Not getAsyncWuOpJoinable(installer.Updates, installJob) 
 		set installProgress = installJob.getProgress()
 		call gResOut.recordInstallStatus(installProgress,updatesToInstall)
 		logInfo( "Install Progress: " & installProgress.percentcomplete & "%" )
@@ -822,21 +861,24 @@ End Function
 
 '*******************************************************************************
 ' The only reason this is used is because the IDownloadJob::isCompleted
-' and IInstallJob::isCompleted never return true in rare situations,
+' and IInstallJob::isCompleted never returns true in rare situations,
 ' so they cannot be relied on for action completion.
-Function getAsyncWuOpComplete(objUpdates, objOperationProgress)
+Function getAsyncWuOpJoinable(objUpdates, objOperationJob)
 
 	Dim i, intTotalResultCode
 	intTotalResultCode = 15
+	
+	Dim objOperationProgress
+	Set objOperationProgress = objOperationJob.getProgress()
 	
 	For i = 0 To objUpdates.count - 1
 		intTotalResultCode = intTotalResultCode AND objOperationProgress.getUpdateResult(i).resultCode
 	Next
 	
-	If (intTotalResultCode = 0) Then
-		getAsyncWuOpComplete = false
+	If (intTotalResultCode = 0) AND (objOperationJob.isCompleted = false) Then
+		getAsyncWuOpJoinable = false
 	Else 
-		getAsyncWuOpComplete = true
+		getAsyncWuOpJoinable = true
 	End If
 	
 End Function
@@ -1240,17 +1282,15 @@ Function autoDetect()
 	e.catch() 'catch
 	On Error GoTo 0
 	If (e.isException()) Then
-		Dim Ex
+		Dim Ex, strMsg
 		Set Ex = e.getException()
 		If ( Ex.number = cLng("&H8024A000") ) Then
-			Dim newEx
-			Set newEx = e.preRaise( New ErrWrap.initExM(WUF_GENERIC_ERROR, _
-			"autoDetect()", "WU Service Not Running", Ex) )
-			Err.Raise newEx.number , newEx.Source, newEx.Description
+			strMsg = "WU Service Not Running"
 		End If
+		strMsg = "Unhandled WU Service Exception"
 		Dim newEx2
 		Set newEx2 = e.preRaise( New ErrWrap.initExM(WUF_GENERIC_ERROR, _
-		"autoDetect()", "", Ex) )
+		"autoDetect()", strMsg, Ex) )
 		Err.Raise newEx2.number, newEx2.source, newEx2.description
 	End If
 End Function
@@ -1457,25 +1497,99 @@ End Class
 
 '===============================================================================
 '===============================================================================
-Class ResultPill
+'Currently Unused
+Class ActiveResult
 	Dim strPillDir
 	Dim strPillPattern
 	Dim strPillLocation
+	Dim strComputerName
+	Dim objSearchResult
 	Dim fPill
 	
-	Function init(strPillDir, strPillPattern)
+	Function init(objSearchResult)
 	
-		Me.strPillDir = strPillDir
-		Me.strPillPattern = strPillPattern
+		Me.strPillDir = ""
+		Me.strPillPattern = ""
+		Me.strPillLocation = ""
+		Me.strComputerName = ""
+		Set Me.objSearchResult = objSearchResult
 		
 		Set init = Me
 		
 	End Function	
 	
-	Private Function generatePillName(objSearchResult) 'IUpdateSearchResult -> String
+	Function writePill(strComputerName, strDirectory)
+		Dim oFso
 		
+		Set oFso = CreateObject("Scripting.FileSystemObject")
+		
+		Dim strPillName
+		
+		If (strDirectory = "") Then
+			strPillName = generatePillName(strComputerName)
+		Else
+			strPillName = strDirectory & "\" & generatePillName(strComputerName)
+		End If
+		
+		call oFso.createTextFile( strPillName , True )
 	End Function
 	
+	Function generateSummary() 'IUpdateSearchResult -> String
+		
+		generateSummary = "Searched=" & getUpdatesSearched() & _
+			", Downloaded=" & getDownloadedCount() & _
+			", Installed=" & getInstalledCount()
+	End Function
+	
+	Function generatePillName( strComputerName) 'IUpdateSearchResult -> String
+		
+		generatePillName = strComputerName & _
+			"_s" & getUpdatesSearched() & _
+			"_d" & getDownloadedCount() & _
+			"_i" & getInstalledCount()
+	End Function
+	
+	Function getUpdatesSearched()
+		getUpdatesSearched = objSearchResult.Updates.Count
+	End Function
+	
+	Function getInstalledCount()
+	
+		Dim intInstalled
+		
+		intInstalled = 0
+	
+		Dim i
+		For i = 0 To ( objSearchResult.Updates.Count-1 )
+			Dim update
+			Set update = objSearchResult.Updates.Item(i)
+			
+			If (update.isInstalled = True) Then
+				intInstalled = intInstalled + 1
+			End If
+		Next
+		
+		getInstalledCount = intInstalled
+	End Function
+	
+	Function getDownloadedCount()
+	
+		Dim intDownloaded
+		
+		intDownloaded = 0
+	
+		Dim i
+		For i = 0 To ( objSearchResult.Updates.Count-1 )
+			Dim update
+			Set update = objSearchResult.Updates.Item(i)
+			
+			If (update.isDownloaded = 0) Then
+				intDownloaded = intDownloaded + 1
+			End If
+		Next
+		
+		getDownloadedCount = intDownloaded
+	End Function
 	
 End Class
 
@@ -1611,8 +1725,8 @@ Class ResultWriter
 	End Function
 
 	'---------------------------------------------------------------------------------
-	Function recordMissingDownloads(intMissing)
-		stream.writeLine( getPair( "install.pre.dls.missing", intMissing ) )
+	Function recordMissingDownloads(intInstalled)
+		stream.writeLine( getPair( "install.pre.dls.missing", intInstalled ) )
 	End Function
 	
 	'---------------------------------------------------------------------------------
