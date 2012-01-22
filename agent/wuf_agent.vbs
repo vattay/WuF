@@ -24,7 +24,7 @@ Option Explicit
 Const LOG_LEVEL = 3
 Const VERBOSE_LEVEL = 2
 Const WUF_CATCH_ALL_EXCEPTIONS = 1
-Const WUF_ASYNC = TRUE
+Const WUF_ASYNC = True
 Const WUF_SHUTDOWN_DELAY = 60
 '--------------------------------------
   
@@ -212,13 +212,13 @@ Function configure()
 	
 	logDebug( "Parsing Configuration" )
 	
-	call gResOut.writeTitle(APP_NAME, APP_VERSION)
+	call gResOut.writeTitle( APP_NAME, APP_VERSION )
 	call gResOut.writeId( gRunId ) 
 	
 	parseArgs()
 
-	logDebug("Creating Update Session.")
-	Set gObjUpdateSession = CreateObject("Microsoft.Update.Session")
+	logDebug( "Creating Update Session." )
+	Set gObjUpdateSession = CreateObject( "Microsoft.Update.Session" )
 	
 End Function
 
@@ -230,6 +230,7 @@ Function parseArgs()
 	Dim success
 	
 	Dim strOutputLocation
+	Dim strPillLocation
 	Dim booShutdownFlag
 	Dim booResultFileFlag
 	
@@ -268,6 +269,9 @@ Function parseArgs()
 			ElseIf ( headStrI(arg,"o") ) Then
 				booResultFileFlag = true
 				strOutputLocation = parseOutputOption(arg)
+			ElseIf ( headStrI(arg,"p") ) Then
+				booResultFileFlag = true
+				strPillLocation = parsePillOption(arg)			
 			Else
 				success = false
 				Err.Raise WUF_INPUT_ERROR, "Wuf.parseArgs()", "Unknown named argument: " & arg	
@@ -343,9 +347,19 @@ End Function
 Function parseOutputOption(strArgVal) 'return boolean
 	parseOutputOption = ""
 	If (strCompI(strArgVal,"oN")) Then
-		parseOutputOption = Wscript.Arguments.Named(strArgVal)
+		parseOutputOption = Wscript.Arguments.Named( strArgVal )
 	Else
 		Err.Raise WUF_INPUT_ERROR, "Wuf.parseArgs()", "Invalid output option."
+	End If
+End Function
+
+'*******************************************************************************
+Function parsePillOption(strArgVal) 'return boolean
+	parsePillOption = ""
+	If (strCompI(strArgVal,"pA")) Then 'Async Pill
+		parsePillOption = Wscript.Arguments.Named( strArgVal )
+	Else
+		Err.Raise WUF_INPUT_ERROR, "Wuf.parseArgs()", "Invalid pill option."
 	End If
 End Function
 
@@ -426,7 +440,7 @@ Function doAction(intAction)
 	
 	If ((intAction and WUF_ACTION_AUTO) <> 0) Then
 		autoDetect()
-	Else
+	ElseIf ((intAction and WUF_ACTION_SEARCH) <> 0) Then
 		Set searchResults = manualAction(intAction)
 	End If
 	
@@ -531,6 +545,7 @@ Function manualAction(intAction)
 	intUpdateCount = 0
 	
 	If ( (intAction and WUF_ACTION_SEARCH) <> 0 ) Then
+	
 		Set searchResults = wuSearch( WUF_DEFAULT_SEARCH_FILTER )
 		intUpdateCount = searchResults.Updates.Count
 		
