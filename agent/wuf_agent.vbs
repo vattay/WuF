@@ -24,7 +24,7 @@ Option Explicit
 Const LOG_LEVEL = 3
 Const VERBOSE_LEVEL = 2
 Const WUF_CATCH_ALL_EXCEPTIONS = 1
-Const WUF_ASYNC = True
+Const WUF_ASYNC = TRUE
 Const WUF_SHUTDOWN_DELAY = 60
 '--------------------------------------
   
