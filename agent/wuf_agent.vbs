@@ -96,6 +96,8 @@ Dim gRunId			'Unique id of run
 Dim gObjUpdateSession 'The windows update session used for all wu operations
 Dim gObjDummyDict	'Used for async wu operations
 Dim gResOut			'Result writer
+Dim gBooUsePill		'Whether to use the result pill or not
+Dim gPillDir		'Result Pill Directory
 Dim e				'Exception manager
 
 Set e = New ExceptionManager.init()
@@ -270,8 +272,8 @@ Function parseArgs()
 				booResultFileFlag = true
 				strOutputLocation = parseOutputOption(arg)
 			ElseIf ( headStrI(arg,"p") ) Then
-				booResultFileFlag = true
-				strPillLocation = parsePillOption(arg)			
+				gBooUsePill = true
+				gPillDir = parsePillOption(arg)			
 			Else
 				success = false
 				Err.Raise WUF_INPUT_ERROR, "Wuf.parseArgs()", "Unknown named argument: " & arg	
@@ -544,35 +546,33 @@ Function manualAction(intAction)
 	
 	intUpdateCount = 0
 	
-	If ( (intAction and WUF_ACTION_SEARCH) <> 0 ) Then
+	Set searchResults = wuSearch( WUF_DEFAULT_SEARCH_FILTER )
+	intUpdateCount = searchResults.Updates.Count
 	
-		Set searchResults = wuSearch( WUF_DEFAULT_SEARCH_FILTER )
-		intUpdateCount = searchResults.Updates.Count
+	logSearchResult( searchResults )
+	gResOut.recordSearchResult( searchResults )
 		
-		logSearchResult( searchResults )
-		gResOut.recordSearchResult( searchResults )
-			
-		Dim rp
-		Set rp = new ActiveResult.init(searchResults)
-		
-		gResOut.recordInfo("Pre-op=" & rp.generateSummary())
-		'call rp.writePill(getComputerName, "")
-		'TODO: add config options to get directory for pill
+	Dim rs
+	Set rs = new ResultSummary.init(searchResults)
 	
-		If (intUpdateCount > 0) Then
-			If ( (intAction and WUF_ACTION_DOWNLOAD) <> 0 ) Then
-				wuDownloadWrapper(searchResults)
-				gResOut.recordInfo("Post-op=" & rp.generateSummary())
-			End If
-			If ( (intAction and  WUF_ACTION_INSTALL) <> 0 ) Then
-				acceptEulas(searchResults)
-				wuInstallWrapper(searchResults)
-				gResOut.recordInfo("Post-op=" & rp.generateSummary())
-			End If
-			
+	gResOut.recordInfo("Pre-op=" & rs.generateSummary())
+
+	If (intUpdateCount > 0) Then
+		If ( (intAction and WUF_ACTION_DOWNLOAD) <> 0 ) Then
+			wuDownloadWrapper(searchResults)
+			gResOut.recordInfo("Post-op=" & rp.generateSummary())
 		End If
-	
+		If ( (intAction and  WUF_ACTION_INSTALL) <> 0 ) Then
+			acceptEulas(searchResults)
+			wuInstallWrapper(searchResults)
+			gResOut.recordInfo("Post-op=" & rs.generateSummary())
+		End If
+		
 	End If
+	
+	Dim resultPill
+	Set resultPill = New ResultPill.initS(rs,gPillDir)
+	resultPill.write( getComputerName() )
 	
 	logDebug("Manual Action completed.")
 	
@@ -1510,62 +1510,110 @@ End Class
 
 '===============================================================================
 '===============================================================================
-'Currently Unused
-Class ActiveResult
-	Dim strPillDir
-	Dim strPillPattern
-	Dim strPillLocation
-	Dim strComputerName
-	Dim objSearchResult
-	Dim fPill
+Class ResultPill
+
+	Dim oFso 
+	Dim objResultSummary
+	Dim strDirectory
+	Dim strLastPillName
 	
+	Function init(objSearchResult, strDirectory)
+	
+		Set oFso = CreateObject("Scripting.FileSystemObject")
+		Set objResultSummary = New ResultSummary.init(objSearchResult)
+		
+		Me.strDirectory = strDirectory
+		Me.strLastPillName = ""
+		
+		Set init = Me
+		
+	End Function
+	
+	'---------------------------------------------------------------------------------
+	Function initS(objResultSummary, strDirectory)
+	
+		Set oFso = CreateObject("Scripting.FileSystemObject")
+		Set Me.objResultSummary = objResultSummary
+		
+		Me.strDirectory = strDirectory
+		Me.strLastPillName = ""
+		
+		Set initS = Me
+		
+	End Function
+	
+	'---------------------------------------------------------------------------------
+	Function write( strPrefix )
+	
+		Dim strPillName
+		
+		If (strDirectory = "") Then
+			strPillName = objResultSummary.generatePillName(strPrefix)
+		Else
+			strPillName = strDirectory & "\" & objResultSummary.generatePillName(strPrefix)
+		End If
+		
+		If NOT ( strLastPillName = "" ) Then
+			If oFso.fileExists( strLastPillName ) Then
+				oFso.deleteFile( strLastPillName ) 
+			End If
+		End If
+		
+		call oFso.createTextFile( strPillName , True )
+		
+		strLastPillName = strPillName
+		
+	End Function
+	
+	'---------------------------------------------------------------------------------
+	Function getComputerName() 'returns string
+		getComputerName = WScript.CreateObject("WScript.Shell").ExpandEnvironmentStrings("%Computername%")
+	End Function
+	
+End Class
+
+'===============================================================================
+'===============================================================================
+Class ResultSummary
+	Dim objSearchResult
+	
+	'---------------------------------------------------------------------------------
 	Function init(objSearchResult)
 	
-		Me.strPillDir = ""
-		Me.strPillPattern = ""
-		Me.strPillLocation = ""
-		Me.strComputerName = ""
 		Set Me.objSearchResult = objSearchResult
 		
 		Set init = Me
 		
-	End Function	
-	
-	Function writePill(strComputerName, strDirectory)
-		Dim oFso
-		
-		Set oFso = CreateObject("Scripting.FileSystemObject")
-		
-		Dim strPillName
-		
-		If (strDirectory = "") Then
-			strPillName = generatePillName(strComputerName)
-		Else
-			strPillName = strDirectory & "\" & generatePillName(strComputerName)
-		End If
-		
-		call oFso.createTextFile( strPillName , True )
+	End Function
+
+	'---------------------------------------------------------------------------------
+	Function getSearchResult() 'returns ISearchResult
+		getSearchResult = objSearchResult
 	End Function
 	
-	Function generateSummary() 'IUpdateSearchResult -> String
+	'---------------------------------------------------------------------------------
+	Function generateSummary() 'returns String
 		
 		generateSummary = "Searched=" & getUpdatesSearched() & _
 			", Downloaded=" & getDownloadedCount() & _
 			", Installed=" & getInstalledCount()
 	End Function
 	
-	Function generatePillName( strComputerName) 'IUpdateSearchResult -> String
+	'---------------------------------------------------------------------------------
+	Function generatePillName( strPrefix ) 'IUpdateSearchResult -> String
 		
-		generatePillName = strComputerName & _
+		generatePillName = strPrefix & _
 			"_s" & getUpdatesSearched() & _
 			"_d" & getDownloadedCount() & _
 			"_i" & getInstalledCount()
 	End Function
 	
+	'---------------------------------------------------------------------------------
 	Function getUpdatesSearched()
 		getUpdatesSearched = objSearchResult.Updates.Count
 	End Function
 	
+	'---------------------------------------------------------------------------------
 	Function getInstalledCount()
 	
 		Dim intInstalled
@@ -1585,6 +1633,7 @@ Class ActiveResult
 		getInstalledCount = intInstalled
 	End Function
 	
+	'---------------------------------------------------------------------------------
 	Function getDownloadedCount()
 	
 		Dim intDownloaded
@@ -1607,8 +1656,8 @@ Class ActiveResult
 End Class
 
 
-'===============================================================================
-'===============================================================================
+'====================================================================================
+'====================================================================================
 Class ResultWriter
 	Dim stdOut, stdErr
 	Dim strResultLocation
@@ -1625,6 +1674,7 @@ Class ResultWriter
 		
 	End Function
 	
+	'---------------------------------------------------------------------------------
 	Function addFileStream(strResultLocation, strShadowLocation)
 	
 		Dim shadowStream
