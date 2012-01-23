@@ -206,7 +206,7 @@ for /F "eol=;" %%i in (%groupFile%) do (
   ( copy agent\%master_agent% \\%%i\C$\windows\temp\%remote_agent% >> %log_file% 2>&1 )  
   if not errorlevel 1 ( 
     ( echo Remote executing wuf agent on %%i >> %log_file% >> %log_file% 2>&1)
-	( psexec %ATTACHED% -s \\%%i cscript.exe //NoLogo c:\windows\temp\%remote_agent% %action% /oN:%dropBoxLocation%\%dropResultPrefix%_%%i.txt %restart% 2>&1) 
+	( psexec %ATTACHED% -s \\%%i cscript.exe //NoLogo c:\windows\temp\%remote_agent% %action% /oN:%dropBoxLocation%\%dropResultPrefix%_%%i.txt /pA:%dropBoxLocation% %restart% 2>&1) 
   )
 )
 

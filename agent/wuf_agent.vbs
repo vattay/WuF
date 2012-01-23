@@ -73,15 +73,15 @@ Const WUF_SHUTDOWN_DONT = 	0
 Const WUF_SHUTDOWN_RESTART = 1
 Const WUF_SHUTDOWN_SHUTDOWN = 2
 
-Const WUF_DEFAULT_SEARCH_FILTER = "IsAssigned=1 and IsHidden=0 and IsInstalled=0 and Type='Software'"
+Const WUF_DEFAULT_SEARCH_FILTER = "IsAssigned=1 and IsHidden=0 and IsInstalled=1 and Type='Software'"
 'Const WUF_DEFAULT_SEARCH_FILTER = "IsAssigned=1 and IsHidden=0 and IsInstalled=1 and Type='Software'"
 Const WUF_DEFAULT_FORCE_SHUTDOWN_ACTION = false
 Const WUF_DEFAULT_ACTION = 1 
 Const WUF_DEFAULT_SHUTDOWN_OPTION = 0
 
-Const WUF_DEFAULT_LOG_LOCATION = "local_wufa"
+Const WUF_DEFAULT_LOG_LOCATION = "C:\windows\temp\local_wufa" '@TODO change this to use . for default and add log location command line arg
 
-Const WUF_USAGE = "wuf_agent.vbs [/aA | /aS | /aD | /aI] [/sN | /sR | /sH] [/fS] [/oN:<location_name>]"
+Const WUF_USAGE = "wuf_agent.vbs [/aA | /aS | /aD | /aI] [/sN | /sR | /sH] [/pA:<dir>] [/fS] [/oN:<location_name>]"
 
 'Globals - avoid modification after initialize()
 Dim stdErr, stdOut	'std stream access
@@ -181,10 +181,10 @@ End Function
 Function initialize()
 
 	setGlobalRunId()
-
+	
 	Set stdOut = WScript.StdOut
 	Set stdErr = Wscript.StdErr
-
+	
 	Set gWshShell = WScript.CreateObject("WScript.Shell")
 	Set gWshSysEnv = gWshShell.Environment("PROCESS")
 	
@@ -213,6 +213,9 @@ Function configure()
 	logInfo( "Run Id: " & gRunId )
 	
 	logDebug( "Parsing Configuration" )
+	
+	WScript.echo WScript.ScriptFullName
+	WScript.echo gLogLocation
 	
 	call gResOut.writeTitle( APP_NAME, APP_VERSION )
 	call gResOut.writeId( gRunId ) 
@@ -383,6 +386,7 @@ Function checkConfig()
 			( (gAction and  WUF_ACTION_INSTALL) <> 0 ) Then
 			
 			Err.Raise WUF_INVALID_CONFIGURATION, "checkConfig", "aS is required for aD or aI"
+			
 		End If
 	End If
 
@@ -441,6 +445,7 @@ Function doAction(intAction)
 	Dim objUpdateResults
 	
 	If ((intAction and WUF_ACTION_AUTO) <> 0) Then
+		logAutoUpdateSettings()
 		autoDetect()
 	ElseIf ((intAction and WUF_ACTION_SEARCH) <> 0) Then
 		Set searchResults = manualAction(intAction)
@@ -475,7 +480,7 @@ Function wuDownloadWrapper(objSearchResults)
 		
 	If (WUF_CATCH_ALL_EXCEPTIONS = 0) Then
 		On Error Resume Next
-			Set downloadResults = wuDownloadOp(WUF_ASYNC)
+			Set downloadResults = wuDownloadOp(objSearchResults, WUF_ASYNC)
 		e.catch() 'catch
 		On Error GoTo 0
 		If (e.isException()) Then
@@ -484,18 +489,20 @@ Function wuDownloadWrapper(objSearchResults)
 			
 			If (Ex.number = cLng("&H80240024") ) Then
 				strMsg = "No updates to download."
+			ElseIf (Ex.number = cLng("&H80240044") ) Then
+				strMsg = "Insufficient Access, try Run As Admin."
 			Else 
 				strMsg = "Unrecognized download exception."
 			End If
 			
 			Dim newEx
 			Set newEx = e.preRaise( New ErrWrap.initExM( WUF_DOWNLOAD_ERROR, _
-				"wuDownloadWrapper()", "No updates to download" , Ex) )
+				"wuDownloadWrapper()", strMsg , Ex) )
 			Err.Raise newEx.number, newEx.Source, newEx.Description
 			
 		End If
 	Else
-		Set downloadResults = wuDownloadOp(WUF_ASYNC)
+		Set downloadResults = wuDownloadOp(objSearchResults, WUF_ASYNC)
 	End If
 		
 	call logDownloadResult(objSearchResults.updates, downloadResults)
@@ -510,26 +517,26 @@ Function wuInstallWrapper(objSearchResults)
 	
 	If (WUF_CATCH_ALL_EXCEPTIONS = 0) Then
 		On Error Resume Next
-			Set installResults = wuInstallOp(WUF_ASYNC)
+			Set installResults = wuInstallOp(objSearchResults, WUF_ASYNC)
 		e.catch() 'catch
 		On Error GoTo 0
 		If (e.isException()) Then
-			Dim Ex
+			Dim Ex, strMsg
 			Set Ex = e.getException()
 			If (Ex.number = cLng("&H80240024") ) Then
-				Dim newEx
-				Set newEx = e.preRaise( New ErrWrap.initExM( WUF_INSTALL_ERROR, _
-					"wuDownloadWrapper()", "No updates to install" , Ex) )
-				Err.Raise newEx.number, newEx.Source, newEx.Description
+				strMsg = "No updates to install"
+			ElseIf (Ex.number = cLng("&H80240044") ) Then
+				strMsg = "Insufficient Access, try Run As Admin."
 			Else 
-				Dim newEx2
-				Set newEx2 = e.preRaise( New ErrWrap.initExM( WUF_INSTALL_ERROR, _
-					"wuDownloadWrapper()", "Unexpected install problem." , Ex) )
-				Err.Raise newEx2.number, newEx2.Source, newEx2.Description
+				strMsg = "Unexpected install problem." 
 			End If
+			Dim newEx
+			Set newEx = e.preRaise( New ErrWrap.initExM( WUF_INSTALL_ERROR, _
+				"wuDownloadWrapper()", strMsg , Ex) )
+			Err.Raise newEx.number, newEx.Source, newEx.Description
 		End If		
 	Else
-		Set installResults = wuInstallOp(WUF_ASYNC)
+		Set installResults = wuInstallOp(objSearchResults, WUF_ASYNC)
 	End If
 
 	call logInstallationResult(objSearchResults.updates,installResults)
@@ -560,7 +567,7 @@ Function manualAction(intAction)
 	If (intUpdateCount > 0) Then
 		If ( (intAction and WUF_ACTION_DOWNLOAD) <> 0 ) Then
 			wuDownloadWrapper(searchResults)
-			gResOut.recordInfo("Post-op=" & rp.generateSummary())
+			gResOut.recordInfo("Post-op=" & rs.generateSummary())
 		End If
 		If ( (intAction and  WUF_ACTION_INSTALL) <> 0 ) Then
 			acceptEulas(searchResults)
@@ -1229,22 +1236,27 @@ End Function
 
 '**************************************************************************************
 Function logLocalWuSettings()
-
-	Dim autoUpdateClient
-	Dim autoUpdateSettings
 	
 	logInfo("Update Server: " & getWsusServer() )
 	
 	logDebug("Target Group: " & getTargetGroup() )
+
+End Function
+
+'**************************************************************************************
+Function logAutoUpdateSettings()
+
+	Dim autoUpdateClient
+	Dim autoUpdateSettings
 	
 	Set autoUpdateClient = CreateObject("Microsoft.Update.AutoUpdate")
 	
 	Set autoUpdateSettings = autoUpdateClient.Settings
 	
-	logInfo("WUA Mode: " & getAutoUpdateNotificationLevelText(autoUpdateSettings.notificationlevel) )
+	logInfo("WUA Mode: " & _
+		getAutoUpdateNotificationLevelText(autoUpdateSettings.notificationlevel) )
 	
 	logInfo("WUA Schedule: " & getAuScheduleText() )
-
 End Function
 
 '**************************************************************************************
