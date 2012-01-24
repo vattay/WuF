@@ -53,10 +53,10 @@ set timestamp=%cur_yyyy%%cur_mm%%cur_dd%_%cur_hh%%cur_nn%%cur_ss%%cur_ms%
 
 REM ========================================================
 REM Conf Log ------------------------------------------
-if not exist log (
-	mkdir log
-)
-set log_file=log\controller-%timestamp%.log
+REM if not exist log (
+REM	mkdir log
+REM )
+REM set log_file=log\controller-%timestamp%.log
 
 REM ========================================================
 REM Parse Args ---------------------------------------------
