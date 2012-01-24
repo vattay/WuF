@@ -30,7 +30,7 @@ REM Constants
 set actionString="AUTO" or "SCAN" or "DOWNLOAD" or "INSTALL"
 set master_agent=wuf_agent.vbs
 set usage=Usage^: %0% groupFile ^{Action^} [RESTART] [ATTACHED]
-set usage2=	Action : ^( AUTO, SCAN, DOWNLOAD, INSTALL ^)
+set usage2=	Action : ^( AUTO, SCAN, DOWNLOAD, INSTALL, DI ^)
 
 REM ========================================================
 REM Date and Time ------------------------------------------
@@ -64,12 +64,12 @@ REM Parse Args ---------------------------------------------
 echo WUF Controller
 
 if not [%5]==[] (	
-	echo Too many arguments. >> %log_file% 2>&1
+	echo Too many arguments.  2>&1
 	goto inputerr
 )
 
 if [%1]==[] (
-	echo You must provide a groupfile. >> %log_file% 2>&1
+	echo You must provide a groupfile.  2>&1
 	goto inputerr
 ) else (
 	set groupFile=%1
@@ -83,25 +83,25 @@ if [%2]==[] (
 	set action_tag=%2
 	if /I "%2"=="auto" (
 		set action=/aA
-		echo Action is AUTO. >> %log_file% 2>&1
+		echo Action is AUTO.  2>&1
 	) else (
 		if /I "%2"=="scan" (
 			set action=/aS
-			echo Action is SCAN. >> %log_file% 2>&1
+			echo Action is SCAN.  2>&1
 		) else (
 			if /I "%2"=="download" (
 				set action=/aS /aD
-				echo Action is DOWNLOAD. >> %log_file% 2>&1
+				echo Action is DOWNLOAD.  2>&1
 			) else (
 				if /I "%2"=="install" (
 					set action=/aS /aI
-					echo Action is INSTALL. >> %log_file% 2>&1
+					echo Action is INSTALL.  2>&1
 				) else (
 					if /I "%2"=="di" (
 						set action=/aS /aD /aI
-						echo Action is DOWNLOAD and INSTALL. >> %log_file% 2>&1
+						echo Action is DOWNLOAD and INSTALL.  2>&1
 					) else (
-						echo Unknown action requested. >> %log_file% 2>&1
+						echo Unknown action requested.  2>&1
 						goto inputerr
 					)
 				)
@@ -116,14 +116,14 @@ set restart_tag=
 if NOT [%3]==[] (
 	if /I "%3"=="restart" (
 		set restart=/sR
-		set restart_tag=r
-		echo Restart was specified. >> %log_file% 2>&1
+		set restart_tag=_r
+		echo Restart was specified.  2>&1
 	) else (
 		if /I "%3"=="attached" (
 			set attached=
-			echo Attached mode was specified. >> %log_file% 2>&1
+			echo Attached mode was specified.  2>&1
 		) else (
-			echo Unknown argument for restart action. >> %log_file% 2>&1
+			echo Unknown argument for restart action.  2>&1
 			goto inputerr
 		)
 	)
@@ -133,13 +133,13 @@ if NOT [%4]==[] (
 	if /I "%4"=="restart" (
 		set restart=/sR
 		set restart_tag=r
-		echo Restart was specified. >> %log_file% 2>&1
+		echo Restart was specified.  2>&1
 	) else (
 		if /I "%4"=="attached" (
 			set attached=
-			echo Attached mode was specified. >> %log_file% 2>&1
+			echo Attached mode was specified.  2>&1
 		) else (
-			echo Unknown argument for restart action. >> %log_file% 2>&1
+			echo Unknown argument for restart action.  2>&1
 			goto inputerr
 		)
 	)
@@ -148,17 +148,17 @@ if NOT [%4]==[] (
 REM ========================================================
 REM Check Config
 if not exist %groupFile% (
-	echo The specified group file could not be found. >> %log_file% 2>&1
+	echo The specified group file could not be found.  2>&1
 	goto :fatalerror
 )
 
 if not exist agent\%master_agent% (
-	echo The agent file could not be found: %master_agent%. >> %log_file% 2>&1
+	echo The agent file could not be found: %master_agent%.  2>&1
 	goto :fatalerror
 )
 
 if not exist %dropBoxRootLocation% (
-	echo The drop box root location %dropBoxRootLocation% does not exist. >> %log_file% 2>&1
+	echo The drop box root location %dropBoxRootLocation% does not exist.  2>&1
 	goto :fatalerror
 )
 
@@ -168,10 +168,10 @@ if /I "%restart%"=="/sR" Set /P restartConfirm="Are you sure you want to restart
 
 if /I "%restart%"=="/sR" (
 	if /I "%restartConfirm%"=="y" (
-		echo Restart was confirmed. >> %log_file% 2>&1
+		echo Restart was confirmed.  2>&1
 	) else (
 		if /I "%restartConfirm%"=="n" (
-			echo Restart was not confirmed^, quitting. >> %log_file% 2>&1
+			echo Restart was not confirmed^, quitting.  2>&1
 			goto wufEnd
 		) else (
 			goto restartConfirmTag
@@ -180,7 +180,7 @@ if /I "%restart%"=="/sR" (
 )
 
 REM !!Pattern for dropbox name.
-set dropBoxLocation="%dropBoxRootLocation%\%timestamp%_%groupName%_%action_tag%_%restart_tag%"
+set dropBoxLocation="%dropBoxRootLocation%\%timestamp%_%groupName%_%action_tag%%restart_tag%"
 
 if not exist %dropBoxLocation% (
 	mkdir %dropBoxLocation%
@@ -188,30 +188,31 @@ if not exist %dropBoxLocation% (
 
 set msg="Drop box instance %dropBoxLocation% does not exist and could not be created."
 if not exist %dropBoxLocation% (
-	echo %msg% >> %log_file% 2>&1
+	echo %msg%  2>&1
 	goto :fatalerror
 ) else (
-	echo Drop box instance: %dropBoxLocation% >> %log_file% 2>&1
+	echo Drop box instance: %dropBoxLocation%  2>&1
 )
 
 REM ========================================================
 REM Configure
 
 set remote_agent=local_%master_agent%
+echo. 2>dead.txt
 
 REM ========================================================
 REM Do your thing
 
-REM add stub return files
-for /F "eol=;" %%i in (%groupFile%) do ( echo. 2>%dropBoxLocation%\%%i%dropResultPostfix% )
-
 REM deploy the script
 for /F "eol=;" %%i in (%groupFile%) do ( 
-  ( echo Copying agent ^(agent\%master_agent%^) to %%i >> %log_file% 2>&1 ) 
-  ( copy agent\%master_agent% \\%%i\C$\windows\temp\%remote_agent% >> %log_file% 2>&1 )  
+  ( echo. 2>%dropBoxLocation%\%%i%dropResultPostfix% 2>&1)
+  ( echo Copying agent ^(agent\%master_agent%^) to %%i 2>&1 ) 
+  ( copy agent\%master_agent% \\%%i\C$\windows\temp\%remote_agent% 2>&1 )  
   if not errorlevel 1 ( 
-    ( echo Remote executing wuf agent on %%i >> %log_file% >> %log_file% 2>&1)
-	( psexec %ATTACHED% -s \\%%i -w C:\Windows\Temp cscript.exe //NoLogo c:\windows\temp\%remote_agent% %action% /oN:%dropBoxLocation%\%%i%dropResultPostfix% /pA:%dropBoxLocation% %restart% 2>&1) 
+    ( echo Remote executing wuf agent on %%i  2>&1)
+	( psexec %ATTACHED% -s \\%%i -w C:\Windows\Temp cscript.exe //NoLogo c:\windows\temp\%remote_agent% %action% /oN:%dropBoxLocation%\%%i%dropResultPostfix% /pS:%dropBoxLocation% %restart% 2>&1) 
+  ) else (
+	( echo %%i >> dead.txt)
   )
 )
 
@@ -221,14 +222,13 @@ ping -n 5 127.0.0.1 >nul
 
 REM delete script
 for /F "eol=;" %%i in (%groupFile%) do ( 
-	( echo "Deleting agent on %%i" >> %log_file% 2>&1 ) 
-	( del \\%%i\C$\windows\temp\%remote_agent% >> %log_file% 2>&1 )
+	( echo "Deleting agent on %%i" 2>&1 ) 
+	( del \\%%i\C$\windows\temp\%remote_agent% 2>&1 )
 )
 
 
 :wufEnd
-echo Wuf Finished > CON
-echo Finished >> %log_file% 2>&1
+echo Finished 2>&1
 goto :eof
 
 :inputerr

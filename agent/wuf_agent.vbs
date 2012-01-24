@@ -17,8 +17,10 @@ Option Explicit
 'along with this program.  If not, see <http://www.gnu.org/licenses/>.
 '*******************************************************************************
 
-'@@TODO: Update Search query input as argument
-'        + Update Impact sort logic
+'@@TODO:  + Fix installed update count being wrong after /aI
+'         + Update Impact sort logic
+'		  + Fix async status output weirness for install (too many newlines)
+'		  + Add error wrap for async install and download, returns raw WU error
 
 'Settings------------------------------
 Const LOG_LEVEL = 3
@@ -77,7 +79,8 @@ Const WUF_DEFAULT_SHUTDOWN_OPTION = 0
 
 Const WUF_DEFAULT_LOG_LOCATION = "." '@TODO change this to use . for default and add log location command line arg
 
-Const WUF_USAGE = "wuf_agent.vbs [/aA | /aS | /aD | /aI] [/sN | /sR | /sH] [/c:<criteria> [/pA:<dir>] [/fS] [/oN:<location_name>]"
+Const WUF_USAGE = "wuf_agent.vbs [/aA | /aS | /aD | /aI] [/sN | /sR | /sH] [/c:<criteria> [/pS:<dir>] [/fS] [/oN:<location_name>]"
+Const WUF_USAGE2 = "/a* - action, /s* - shutdown action, /fS - force shutdown /c - update criteria, /pS - result pill, oN - result location"
 
 'Globals - avoid modification after initialize()
 Dim stdErr, stdOut	'std stream access
@@ -133,9 +136,11 @@ Function main()
 			ElseIf (Ex.number = WUF_INPUT_ERROR) Then
 				gResOut.recordError( "Improper input, " & Ex.Description )
 				gResOut.recordInfo( WUF_USAGE )
+				gResOut.recordInfo( WUF_USAGE2 )
 			ElseIf  (Ex.number = WUF_INVALID_CONFIGURATION ) Then
 				gResOut.recordError( "Invalid Configuration, " & Ex.Description )
 				gResOut.recordInfo( WUF_USAGE )
+				gResOut.recordInfo( WUF_USAGE2 )
 			ElseIf  (Ex.number = WUF_SEARCH_ERROR ) Then
 				gResOut.recordError( "Search Problem, " & Ex.Description )
 				logError( e.dump(Ex) )
@@ -288,12 +293,12 @@ Function parseArgs()
 		
 		If (booUseResultFile) Then
 			If strOutputLocation = "" Then
-				call gResOut.addTeedFileStream(gRunId & ".csv", generateShadowLocation())
+				call gResOut.addTeedFileStream(gRunId & ".result.txt", generateShadowLocation())
 			Else
 				call gResOut.addTeedFileStream(strOutputLocation, generateShadowLocation())
 			End If
 		Else 
-			'@@FIX set gResOut to null?
+			logInfo("Not using a result file.")
 		End If
 		
 	Else
@@ -361,7 +366,7 @@ End Function
 '*******************************************************************************
 Function parsePillOption(strArgVal) 'return boolean
 	parsePillOption = ""
-	If (strCompI(strArgVal,"pA")) Then 'Async Pill
+	If (strCompI(strArgVal,"pS")) Then 'Sync Pill
 		parsePillOption = Wscript.Arguments.Named( strArgVal )
 	Else
 		Err.Raise WUF_INPUT_ERROR, "Wuf.parseArgs()", "Invalid pill option."
@@ -578,6 +583,8 @@ Function manualAction(intAction)
 	End If
 	
 	If ( gBooUsePill ) Then
+		'@@TODO May be necessary to run another search, to avoid incorrect
+		'  installation count.
 		Dim resultPill
 		Set resultPill = New ResultPill.initS(rs,gPillDir)
 		resultPill.write( getComputerName() )
