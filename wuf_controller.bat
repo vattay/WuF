@@ -205,7 +205,7 @@ REM Do your thing
 
 REM deploy the script
 for /F "eol=;" %%i in (%groupFile%) do ( 
-  ( echo. 2>%dropBoxLocation%\%%i%dropResultPostfix% 2>&1)
+  ( echo. 2>%dropBoxLocation%\%%i%dropResultPostfix%)
   ( echo Copying agent ^(agent\%master_agent%^) to %%i 2>&1 ) 
   ( copy agent\%master_agent% \\%%i\C$\windows\temp\%remote_agent% 2>&1 )  
   if not errorlevel 1 ( 
