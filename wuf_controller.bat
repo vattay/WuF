@@ -23,7 +23,7 @@ REM ========================================================
 REM User Variables
 REM set dropBoxRootLocation="\\moore\public\wuf_dropbox"
 set dropBoxRootLocation=c:\temp\wuf_dropbox
-set dropResultPrefix=wufa_result
+set dropResultPostfix=.result.txt
 
 REM ========================================================
 REM Constants
@@ -90,15 +90,20 @@ if [%2]==[] (
 			echo Action is SCAN. >> %log_file% 2>&1
 		) else (
 			if /I "%2"=="download" (
-				set action=/aD
+				set action=/aS /aD
 				echo Action is DOWNLOAD. >> %log_file% 2>&1
 			) else (
 				if /I "%2"=="install" (
-					set action=/aD /aI
+					set action=/aS /aI
 					echo Action is INSTALL. >> %log_file% 2>&1
 				) else (
-					echo Unknown action requested. >> %log_file% 2>&1
-					goto inputerr
+					if /I "%2"=="di" (
+						set action=/aS /aD /aI
+						echo Action is DOWNLOAD and INSTALL. >> %log_file% 2>&1
+					) else (
+						echo Unknown action requested. >> %log_file% 2>&1
+						goto inputerr
+					)
 				)
 			)
 		)
@@ -198,7 +203,7 @@ REM ========================================================
 REM Do your thing
 
 REM add stub return files
-for /F "eol=;" %%i in (%groupFile%) do ( echo. 2>%dropBoxLocation%\%dropResultPrefix%_%%i.txt )
+for /F "eol=;" %%i in (%groupFile%) do ( echo. 2>%dropBoxLocation%\%%i%dropResultPostfix% )
 
 REM deploy the script
 for /F "eol=;" %%i in (%groupFile%) do ( 
@@ -206,7 +211,7 @@ for /F "eol=;" %%i in (%groupFile%) do (
   ( copy agent\%master_agent% \\%%i\C$\windows\temp\%remote_agent% >> %log_file% 2>&1 )  
   if not errorlevel 1 ( 
     ( echo Remote executing wuf agent on %%i >> %log_file% >> %log_file% 2>&1)
-	( psexec %ATTACHED% -s \\%%i cscript.exe //NoLogo c:\windows\temp\%remote_agent% %action% /oN:%dropBoxLocation%\%dropResultPrefix%_%%i.txt /pA:%dropBoxLocation% %restart% 2>&1) 
+	( psexec %ATTACHED% -s \\%%i -w C:\Windows\Temp cscript.exe //NoLogo c:\windows\temp\%remote_agent% %action% /oN:%dropBoxLocation%\%%i%dropResultPostfix% /pA:%dropBoxLocation% %restart% 2>&1) 
   )
 )
 

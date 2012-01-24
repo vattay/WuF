@@ -17,20 +17,17 @@ Option Explicit
 'along with this program.  If not, see <http://www.gnu.org/licenses/>.
 '*******************************************************************************
 
-'@TODO: Add feedback file name generation, format name-s#-d#-i#-r?.txt
-'Create Result Transmitter class to handle this.
+'@@TODO: Update Search query input as argument
+'        + Update Impact sort logic
 
 'Settings------------------------------
 Const LOG_LEVEL = 3
-Const VERBOSE_LEVEL = 2
 Const WUF_CATCH_ALL_EXCEPTIONS = 1
-Const WUF_ASYNC = TRUE
+Const WUF_ASYNC = True
 Const WUF_SHUTDOWN_DELAY = 60
+Const ASYNC_REFRESH_RATE = 1000
+Const ASYNC_REFRESH_MODERATION = 10
 '--------------------------------------
-  
-Const VERBOSE_LEVEL_HIGH = 2
-Const VERBOSE_LEVEL_LOW = 1
-Const VERBOSE_LEVEL_QUIET = 0
   
 Const LOG_LEVEL_DEBUG = 3
 Const LOG_LEVEL_INFO = 2
@@ -73,15 +70,14 @@ Const WUF_SHUTDOWN_DONT = 	0
 Const WUF_SHUTDOWN_RESTART = 1
 Const WUF_SHUTDOWN_SHUTDOWN = 2
 
-Const WUF_DEFAULT_SEARCH_FILTER = "IsAssigned=1 and IsHidden=0 and IsInstalled=1 and Type='Software'"
-'Const WUF_DEFAULT_SEARCH_FILTER = "IsAssigned=1 and IsHidden=0 and IsInstalled=1 and Type='Software'"
+Const WUF_DEFAULT_SEARCH_CRITERIA = "IsAssigned=1 and IsHidden=0 and IsInstalled=0 and Type='Software'"
 Const WUF_DEFAULT_FORCE_SHUTDOWN_ACTION = false
 Const WUF_DEFAULT_ACTION = 1 
 Const WUF_DEFAULT_SHUTDOWN_OPTION = 0
 
-Const WUF_DEFAULT_LOG_LOCATION = "C:\windows\temp\local_wufa" '@TODO change this to use . for default and add log location command line arg
+Const WUF_DEFAULT_LOG_LOCATION = "." '@TODO change this to use . for default and add log location command line arg
 
-Const WUF_USAGE = "wuf_agent.vbs [/aA | /aS | /aD | /aI] [/sN | /sR | /sH] [/pA:<dir>] [/fS] [/oN:<location_name>]"
+Const WUF_USAGE = "wuf_agent.vbs [/aA | /aS | /aD | /aI] [/sN | /sR | /sH] [/c:<criteria> [/pA:<dir>] [/fS] [/oN:<location_name>]"
 
 'Globals - avoid modification after initialize()
 Dim stdErr, stdOut	'std stream access
@@ -98,6 +94,7 @@ Dim gObjDummyDict	'Used for async wu operations
 Dim gResOut			'Result writer
 Dim gBooUsePill		'Whether to use the result pill or not
 Dim gPillDir		'Result Pill Directory
+Dim gSearchCriteria 
 Dim e				'Exception manager
 
 Set e = New ExceptionManager.init()
@@ -192,11 +189,12 @@ Function initialize()
 	
 	Call gObjDummyDict.Add("DummyFunction", New DummyClass)
 	
-	gLogLocation = WUF_DEFAULT_LOG_LOCATION & "_" & gRunId & ".log"
+	gLogLocation = WUF_DEFAULT_LOG_LOCATION & "\wufa_" & gRunId & ".log"
 	Set gResOut = New ResultWriter.init()
 	gAction = WUF_ACTION_UNDEFINED
 	gShutdownOption = WUF_DEFAULT_SHUTDOWN_OPTION
 	gForceShutdown = WUF_DEFAULT_FORCE_SHUTDOWN_ACTION
+	gSearchCriteria = WUF_DEFAULT_SEARCH_CRITERIA
 
 End Function
 
@@ -214,13 +212,11 @@ Function configure()
 	
 	logDebug( "Parsing Configuration" )
 	
-	WScript.echo WScript.ScriptFullName
-	WScript.echo gLogLocation
-	
 	call gResOut.writeTitle( APP_NAME, APP_VERSION )
-	call gResOut.writeId( gRunId ) 
-	
+
 	parseArgs()
+	
+	call gResOut.writeId( gRunId ) 
 
 	logDebug( "Creating Update Session." )
 	Set gObjUpdateSession = CreateObject( "Microsoft.Update.Session" )
@@ -237,10 +233,10 @@ Function parseArgs()
 	Dim strOutputLocation
 	Dim strPillLocation
 	Dim booShutdownFlag
-	Dim booResultFileFlag
+	Dim booUseResultFile
 	
 	strOutputLocation = ""
-	booResultFileFlag = false
+	booUseResultFile = false
 	booShutdownFlag = false
 	success = false
 	
@@ -272,11 +268,13 @@ Function parseArgs()
 					Err.Raise WUF_INPUT_ERROR, "Wuf.parseArgs()", "Invalid force option."
 				End If
 			ElseIf ( headStrI(arg,"o") ) Then
-				booResultFileFlag = true
+				booUseResultFile = true
 				strOutputLocation = parseOutputOption(arg)
 			ElseIf ( headStrI(arg,"p") ) Then
 				gBooUsePill = true
-				gPillDir = parsePillOption(arg)			
+				gPillDir = parsePillOption(arg)
+			ElseIf ( headStrI(arg,"c") ) Then
+				gSearchCriteria = Wscript.Arguments.Named( arg )
 			Else
 				success = false
 				Err.Raise WUF_INPUT_ERROR, "Wuf.parseArgs()", "Unknown named argument: " & arg	
@@ -288,12 +286,14 @@ Function parseArgs()
 			Err.Raise WUF_INPUT_ERROR, "Wuf.parseArgs()", "Unknown argument: " & arg
 		Next
 		
-		If (booResultFileFlag) Then
+		If (booUseResultFile) Then
 			If strOutputLocation = "" Then
-				call gResOut.addFileStream(gRunId & ".csv", generateShadowLocation())
+				call gResOut.addTeedFileStream(gRunId & ".csv", generateShadowLocation())
 			Else
-				call gResOut.addFileStream(strOutputLocation, generateShadowLocation())
+				call gResOut.addTeedFileStream(strOutputLocation, generateShadowLocation())
 			End If
+		Else 
+			'@@FIX set gResOut to null?
 		End If
 		
 	Else
@@ -553,7 +553,7 @@ Function manualAction(intAction)
 	
 	intUpdateCount = 0
 	
-	Set searchResults = wuSearch( WUF_DEFAULT_SEARCH_FILTER )
+	Set searchResults = wuSearch( gSearchCriteria )
 	intUpdateCount = searchResults.Updates.Count
 	
 	logSearchResult( searchResults )
@@ -577,9 +577,11 @@ Function manualAction(intAction)
 		
 	End If
 	
-	Dim resultPill
-	Set resultPill = New ResultPill.initS(rs,gPillDir)
-	resultPill.write( getComputerName() )
+	If ( gBooUsePill ) Then
+		Dim resultPill
+		Set resultPill = New ResultPill.initS(rs,gPillDir)
+		resultPill.write( getComputerName() )
+	End If
 	
 	logDebug("Manual Action completed.")
 	
@@ -726,6 +728,8 @@ Function wuDownloadAsync(objSearchResult)
 	Set downloader = gObjUpdateSession.CreateUpdateDownloader() 
 	Set updates = objSearchResult.Updates
 	downloader.Updates = updates
+	'@@TODO Try to avoid downloading updates already available. Problem is the IUpdate.isDownloaded method is
+	'not reliable. No solution yet, it attempts to download everything searched.
 	
 	logInfo("Downloading Updates Asynchronously")
 
@@ -733,11 +737,19 @@ Function wuDownloadAsync(objSearchResult)
 
 	Set dlProgress = dlJob.getProgress()
 	
+	Dim outputModerator
+	outputModerator = ASYNC_REFRESH_MODERATION ' slow file output by factor of...
+	Dim i
+	i = 0
 	While Not getAsyncWuOpJoinable(updates, dlJob)  
-		set dlProgress = dlJob.getProgress()
-		call gResOut.recordDownloadStatus(dlProgress, updates)
-		logInfo( "Download Progress: " & dlProgress.percentcomplete & "%" )
-		WScript.Sleep(2000)
+		Set dlProgress = dlJob.getProgress()
+		Call gResOut.refreshDownloadStatus(dlProgress, updates)
+		If (i = 0) Then
+			Call gResOut.recordDownloadStatus(dlProgress, updates)
+			logInfo( "Download Progress: " & dlProgress.percentcomplete & "%" )
+		End IF
+		i = (i+1) Mod outputModerator
+		WScript.Sleep(ASYNC_REFRESH_RATE)
 	Wend
 	
 	If (dlJob.isCompleted = TRUE) Then 
@@ -853,11 +865,19 @@ Function wuInstallAsync(objSearchResult)
 
 	set installProgress = installJob.getProgress()
 	
+	Dim outputModerator
+	outputModerator = ASYNC_REFRESH_MODERATION ' slow file output by factor of...
+	Dim i
+	i = 0
 	While Not getAsyncWuOpJoinable(installer.Updates, installJob) 
 		set installProgress = installJob.getProgress()
-		call gResOut.recordInstallStatus(installProgress,updatesToInstall)
-		logInfo( "Install Progress: " & installProgress.percentcomplete & "%" )
-		WScript.Sleep(2000)
+		call gResOut.refreshInstallStatus(installProgress,updatesToInstall)
+		If (i = 0) Then
+			Call gResOut.recordInstallStatus(installProgress, updatesToInstall)
+			logInfo( "Install Progress: " & installProgress.percentcomplete & "%" )
+		End IF
+		WScript.Sleep(ASYNC_REFRESH_RATE)
+		i = (i+1) Mod outputModerator
 	Wend
 	
 	If (installJob.isCompleted = TRUE) Then 
@@ -1311,12 +1331,13 @@ Function autoDetect()
 		Set Ex = e.getException()
 		If ( Ex.number = cLng("&H8024A000") ) Then
 			strMsg = "WU Service Not Running"
+		Else
+			strMsg = "Unhandled WU Service Exception"
 		End If
-		strMsg = "Unhandled WU Service Exception"
-		Dim newEx2
-		Set newEx2 = e.preRaise( New ErrWrap.initExM(WUF_GENERIC_ERROR, _
+		Dim newEx
+		Set newEx = e.preRaise( New ErrWrap.initExM(WUF_GENERIC_ERROR, _
 		"autoDetect()", strMsg, Ex) )
-		Err.Raise newEx2.number, newEx2.source, newEx2.description
+		Err.Raise newEx.number, newEx.source, newEx.description
 	End If
 End Function
 
@@ -1617,7 +1638,7 @@ Class ResultSummary
 		generatePillName = strPrefix & _
 			"_s" & getUpdatesSearched() & _
 			"_d" & getDownloadedCount() & _
-			"_i" & getInstalledCount()
+			"_i" & getInstalledCount() & ".pil"
 	End Function
 	
 	'---------------------------------------------------------------------------------
@@ -1657,7 +1678,7 @@ Class ResultSummary
 			Dim update
 			Set update = objSearchResult.Updates.Item(i)
 			
-			If (update.isDownloaded = 0) Then
+			If (update.isDownloaded = True) Then
 				intDownloaded = intDownloaded + 1
 			End If
 		Next
@@ -1674,27 +1695,46 @@ Class ResultWriter
 	Dim stdOut, stdErr
 	Dim strResultLocation
 	Dim stream
+	Dim fStream
 	
 	Function init()
 	
-		Set stdOut = WScript.StdOut
-		Set stdErr = Wscript.StdErr
+		Set Me.stdOut = WScript.StdOut
+		Set Me.stdErr = Wscript.StdErr
 		
-		Set stream = StdOut
+		Set Me.stream = StdOut
+		
+		Me.fStream = NULL
 		
 		Set init = Me
 		
 	End Function
 	
 	'---------------------------------------------------------------------------------
-	Function addFileStream(strResultLocation, strShadowLocation)
+	Function addTeedFileStream(strResultLocation, strShadowLocation)
 	
 		Dim shadowStream
 	
 		Set shadowStream = New ShadowedFileOutputStreamWriter.init(strResultLocation, _
 			strShadowLocation)
 		
+		Set Me.fStream = shadowStream
+		
 		Set stream = New psuedoTee.init(shadowStream)
+		
+	End Function
+	
+	'---------------------------------------------------------------------------------
+	Function setFileStream(strResultLocation, strShadowLocation) 'Only to file
+	
+		Dim shadowStream
+	
+		Set shadowStream = New ShadowedFileOutputStreamWriter.init(strResultLocation, _
+			strShadowLocation)
+			
+		Set Me.fStream = shadowStream
+		
+		Set stream = shadowStream
 		
 	End Function
 	
@@ -1778,19 +1818,35 @@ Class ResultWriter
 	End Function
 	
 	'---------------------------------------------------------------------------------
-	Function recordDownloadStatus( objDlProgress, objUpdates )
-		reWrite("                                                                              ")
+	Function refreshDownloadStatus( objDlProgress, objUpdates )
+		reWrite("                                                                                              ")
 		reWrite( "download.status" & getTotalUpdateDownloadProgress(objDlProgress,objUpdates) & _
 			":" & getCurrentUpdateDownloadProgress(objDlProgress,objUpdates) )
 	End Function
 	
 	'---------------------------------------------------------------------------------
-	Function recordInstallStatus( objInstallProgress, objUpdates )
-		reWrite("                                                                               ")
+	Function refreshInstallStatus( objInstallProgress, objUpdates )
+		reWrite("                                                                                              ")
 		reWrite( "install.status" & getTotalUpdateInstallProgress(objInstallProgress,objUpdates) & _
 			":" & getCurrentUpdateInstallProgress(objInstallProgress,objUpdates) )
 	End Function
 
+	'---------------------------------------------------------------------------------
+	Function recordDownloadStatus( objDlProgress, objUpdates )
+		reWrite("                                                                                              ")
+		stream.writeLine("")
+		stream.writeLine( "#download.status" & getTotalUpdateDownloadProgress(objDlProgress,objUpdates) & _
+			":" & getCurrentUpdateDownloadProgress(objDlProgress,objUpdates) )
+	End Function
+	
+	'---------------------------------------------------------------------------------
+	Function recordInstallStatus( objInstallProgress, objUpdates )
+		reWrite("                                                                                              ")
+		stream.writeLine("")
+		stream.writeLine( "#install.status" & getTotalUpdateInstallProgress(objInstallProgress,objUpdates) & _
+			":" & getCurrentUpdateInstallProgress(objInstallProgress,objUpdates) )
+	End Function
+	
 	'---------------------------------------------------------------------------------
 	Function recordInstallationResult( objUpdates, objInstallationResults )
 		stream.writeLine( getPair("install.reboot_required", _
