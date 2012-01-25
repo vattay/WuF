@@ -60,6 +60,7 @@ Const WUF_INSTALL_ERROR = 10007
 Const WUF_GENERIC_ERROR = 10008
 Const WUF_VERIFY_ERROR = 10009
 Const WUF_STREAM_ERROR = 10010
+Const WUF_COMMAND_ERROR = 10011
 
 Const WUF_ACTION_UNDEFINED = 0
 Const WUF_ACTION_AUTO = 	1
@@ -569,22 +570,23 @@ Function manualAction(intAction)
 	
 	gResOut.recordInfo("Pre-op=" & rs.generateSummary())
 
-	If (intUpdateCount > 0) Then
+	'If (intUpdateCount > 0) Then
 		If ( (intAction and WUF_ACTION_DOWNLOAD) <> 0 ) Then
 			wuDownloadWrapper(searchResults)
 			gResOut.recordInfo("Post-op=" & rs.generateSummary())
 		End If
+		
 		If ( (intAction and  WUF_ACTION_INSTALL) <> 0 ) Then
 			acceptEulas(searchResults)
 			wuInstallWrapper(searchResults)
 			gResOut.recordInfo("Post-op=" & rs.generateSummary())
 		End If
-		
-	End If
+	'End If
 	
 	If ( gBooUsePill ) Then
-		'@@TODO May be necessary to run another search, to avoid incorrect
-		'  installation count.
+		Set searchResults = wuSearch( gSearchCriteria )
+		Set rs = new ResultSummary.init(searchResults)
+		gResOut.recordInfo("post-check=" & rs.generateSummary())
 		Dim resultPill
 		Set resultPill = New ResultPill.initS(rs,gPillDir)
 		resultPill.write( getComputerName() )
@@ -1101,12 +1103,26 @@ Function shutDownActionDelay(intAction, intDelay)
 	
 	If (intAction = WUF_SHUTDOWN_RESTART) Then
 		strShutdown = "shutdown.exe /r /t " & intDelay & " /f"
-		objShell.Run strShutdown, 0, FALSE
 	ElseIf	(intAction = WUF_SHUTDOWN_SHUTDOWN) Then
 		strShutdown = "shutdown.exe /s /t " & intDelay & " /f"
-		objShell.Run strShutdown, 0, FALSE
+	Else 
+		Exit Function
 	End If
 	
+	On Error Resume Next
+	objShell.Run strShutdown, 0, FALSE
+		e.catch() 'catch
+	On Error GoTo 0
+	If (e.isException()) Then
+		Dim Ex, strMsg
+		Set Ex = e.getException()
+			strMsg = "Shutdown command could not complete."
+		Dim newEx
+		Set newEx = New ErrWrap.initExM(WUF_COMMAND_ERROR, _
+			"shutDownActionDelay()", strMsg, Ex) 
+		call logErrorEx("Shutdown action problem", newEx)
+		gResOut.recordError( strMsg )
+	End If
 End Function
 
 '*******************************************************************************
