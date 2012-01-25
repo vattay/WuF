@@ -680,6 +680,9 @@ Function wuSearch(strFilter) 'return ISearchResult
 		ElseIf (Ex = cLng("&H8024001F") ) Then 
 			strDsc = "SUS_E_NO_CONNECTION"
 			strMsg = "No network connection available."
+		ElseIf (Ex = cLng("&H80070002") ) Then 
+			strDsc = "	ERROR_FILE_NOT_FOUND"
+			strMsg = "Software Distribution folder likley needs to be cleared out."
 		ElseIf (Ex = 7) Then 
 			strDsc = "Out of memory - In most cases, this error will be resolved by rebooting the client." 
 			strMsg = "Out of Memory"
