@@ -462,31 +462,31 @@ Function doAction(intAction)
 End Function
 
 '*******************************************************************************
-Function wuDownloadOp(objSearchResults, booAsync)
+Function wuDownloadOp(objSearchResult, booAsync)
 		If (booAsync) Then
-			Set wuDownloadOp = wuDownloadAsync(objSearchResults)
+			Set wuDownloadOp = wuDownloadAsync(objSearchResult)
 		Else
-			Set wuDownloadOp = wuDownload(objSearchResults)
+			Set wuDownloadOp = wuDownload(objSearchResult)
 		End If
 End Function
 
 '*******************************************************************************
-Function wuInstallOp(objSearchResults, booAsync)
+Function wuInstallOp(objSearchResult, booAsync)
 		If (booAsync) Then
-			Set wuInstallOp = wuInstallAsync(objSearchResults)
+			Set wuInstallOp = wuInstallAsync(objSearchResult)
 		Else
-			Set wuInstallOp = wuInstall(objSearchResults)
+			Set wuInstallOp = wuInstall(objSearchResult)
 		End If
 End Function
 
 '*******************************************************************************
-Function wuDownloadWrapper(objSearchResults)
+Function wuDownloadWrapper(objSearchResult)
 
 	Dim downloadResults
 		
 	If (WUF_CATCH_ALL_EXCEPTIONS = 0) Then
 		On Error Resume Next
-			Set downloadResults = wuDownloadOp(objSearchResults, WUF_ASYNC)
+			Set downloadResults = wuDownloadOp(objSearchResult, WUF_ASYNC)
 		e.catch() 'catch
 		On Error GoTo 0
 		If (e.isException()) Then
@@ -508,22 +508,22 @@ Function wuDownloadWrapper(objSearchResults)
 			
 		End If
 	Else
-		Set downloadResults = wuDownloadOp(objSearchResults, WUF_ASYNC)
+		Set downloadResults = wuDownloadOp(objSearchResult, WUF_ASYNC)
 	End If
 		
-	call logDownloadResult(objSearchResults.updates, downloadResults)
-	call gResOut.recordDownloadResult(objSearchResults.updates, downloadResults)
+	call logDownloadResult(objSearchResult.updates, downloadResults)
+	call gResOut.recordDownloadResult(objSearchResult.updates, downloadResults)
 	
 End Function
 
 '*******************************************************************************
-Function wuInstallWrapper(objSearchResults)
+Function wuInstallWrapper(objSearchResult)
 
-	Dim installResults
+	Dim installResult
 	
 	If (WUF_CATCH_ALL_EXCEPTIONS = 0) Then
 		On Error Resume Next
-			Set installResults = wuInstallOp(objSearchResults, WUF_ASYNC)
+			Set installResult = wuInstallOp(objSearchResult, WUF_ASYNC)
 		e.catch() 'catch
 		On Error GoTo 0
 		If (e.isException()) Then
@@ -533,6 +533,8 @@ Function wuInstallWrapper(objSearchResults)
 				strMsg = "No updates to install"
 			ElseIf (Ex.number = cLng("&H80240044") ) Then
 				strMsg = "Insufficient Access, try Run As Admin."
+			ElseIf (Ex.number = cLng("&H80240016") ) Then
+				strMsg = "Install not allowed due to pending restart or other installation."
 			Else 
 				strMsg = "Unexpected install problem." 
 			End If
@@ -542,11 +544,11 @@ Function wuInstallWrapper(objSearchResults)
 			Err.Raise newEx.number, newEx.Source, newEx.Description
 		End If		
 	Else
-		Set installResults = wuInstallOp(objSearchResults, WUF_ASYNC)
+		Set installResult = wuInstallOp(objSearchResult, WUF_ASYNC)
 	End If
 
-	call logInstallationResult(objSearchResults.updates,installResults)
-	call gResOut.recordInstallationResult(objSearchResults.updates, installResults )
+	call logInstallationResult(objSearchResult.updates,installResult)
+	call gResOut.recordInstallationResult(objSearchResult.updates, installResult )
 	
 End Function
 
@@ -933,16 +935,16 @@ Function getAsyncWuOpJoinable(objUpdates, objOperationJob)
 End Function
 
 '**************************************************************************************
-Function logSearchResult(objSearchResults)
+Function logSearchResult(objSearchResult)
 
-	logInfo("Number of missing updates: " & objSearchResults.Updates.Count)
+	logInfo("Number of missing updates: " & objSearchResult.Updates.Count)
 	
 	Dim i
-	For i = 0 To (objSearchResults.Updates.Count-1)
+	For i = 0 To (objSearchResult.Updates.Count-1)
 		Dim update, objCategories
-		Set update = objSearchResults.Updates.Item(i)
-		Set objCategories = objSearchResults.Updates.Item(i).Categories
-		logInfo("Missing: " & objSearchResults.Updates.Item(i) )
+		Set update = objSearchResult.Updates.Item(i)
+		Set objCategories = objSearchResult.Updates.Item(i).Categories
+		logInfo("Missing: " & objSearchResult.Updates.Item(i) )
 	Next
 	
 End Function
@@ -1365,15 +1367,15 @@ Function autoDetect()
 End Function
 
 '**************************************************************************************
-Function acceptEulas(objSearchResults) 'return ISearchResult
+Function acceptEulas(objSearchResult) 'return ISearchResult
 	logDebug("Accepting EULAS on each update...")
 	Dim i
-	For i = 0 to objSearchResults.Updates.Count-1
+	For i = 0 to objSearchResult.Updates.Count-1
 		Dim update
-		Set update = objSearchResults.Updates.Item(i) 
+		Set update = objSearchResult.Updates.Item(i) 
 		If Not update.EulaAccepted Then update.AcceptEula 
 	Next 
-	Set acceptEulas = objSearchResults
+	Set acceptEulas = objSearchResult
 End Function
 
 '*************************************************************************************************************
@@ -1762,15 +1764,15 @@ Class ResultWriter
 	End Function
 	
 	'---------------------------------------------------------------------------------
-	Function recordUpdateList( objSearchResults )
+	Function recordUpdateList( objSearchResult )
 		
 		Dim searchList
 		searchList = ""
 		
 		Dim i
-		For i = 0 To ( objSearchResults.Updates.Count-1 )
+		For i = 0 To ( objSearchResult.Updates.Count-1 )
 			Dim update, updateLine
-			Set update = objSearchResults.Updates.Item(i)
+			Set update = objSearchResult.Updates.Item(i)
 			
 			updateLine = "{" & update.title & _
 				"|impact=" & update.installationBehavior.impact & _
@@ -1788,14 +1790,14 @@ Class ResultWriter
 	End Function
 	
 	'---------------------------------------------------------------------------------
-	Function recordSearchResult( objSearchResults )
+	Function recordSearchResult( objSearchResult )
 		stream.writeLine( getPair( "search.result.count", _
-			objSearchResults.Updates.Count) )
+			objSearchResult.Updates.Count) )
 			
 		stream.writeLine( getPair( "search.result.code", _
-			getOperationResultMsg( objSearchResults.ResultCode) ) )
+			getOperationResultMsg( objSearchResult.ResultCode) ) )
 		
-		recordUpdateList(objSearchResults)
+		recordUpdateList(objSearchResult)
 	End Function
 	
 	'---------------------------------------------------------------------------------
@@ -1804,6 +1806,8 @@ Class ResultWriter
 			objUpdates.Count ) )
 		stream.writeLine( getPair( strType & ".result.code", _
 			getOperationResultMsg(objResults.ResultCode ) ) )
+		stream.writeLine( getPair( strType & ".result.HResult", _
+			hex( objResults.HResult ) ) ) 
 		
 		Dim dlList
 		dlList = ""
@@ -1813,8 +1817,9 @@ Class ResultWriter
 			Dim update, updateLine, dlLine
 			Set update = objUpdates.Item(i)
 
-			dlLine = update.title & "|" &  _
-				getOperationResultMsg(objResults.GetUpdateResult(i).ResultCode)
+			dlLine = update.title & _
+				"|" & getOperationResultMsg(objResults.GetUpdateResult(i).ResultCode) & _
+				"|" & hex( objResults.GetUpdateResult(i).HResult )
 			If (i = 0 ) Then
 				dlList = dlLine
 			Else
