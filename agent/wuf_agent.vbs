@@ -1102,14 +1102,19 @@ End Function
 ' A non zero delay is recommended so that this script can finish normally
 Function shutDownActionDelay(intAction, intDelay)
 	Dim strShutDown
+	Dim strSysRt
 	Dim objShell
 	
 	Set objShell = CreateObject("WScript.Shell")
 	
+	strSysRt = WScript.CreateObject("WScript.Shell").ExpandEnvironmentStrings("%SystemRoot%")
+	
 	If (intAction = WUF_SHUTDOWN_RESTART) Then
-		strShutdown = "shutdown.exe /r /t " & intDelay & " /f"
+		strShutdown = strSysRt & "\system32\cmd.exe /c " & strSysRt & _
+			"system32\shutdown.exe /r /t " & intDelay & " /f"
 	ElseIf	(intAction = WUF_SHUTDOWN_SHUTDOWN) Then
-		strShutdown = "shutdown.exe /s /t " & intDelay & " /f"
+		strShutdown = strSysRt & "\system32\cmd.exe /c " & strSysRt & _
+			"system32\shutdown.exe /s /t " & intDelay & " /f"
 	Else 
 		Exit Function
 	End If
