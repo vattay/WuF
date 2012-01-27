@@ -195,6 +195,14 @@ if not exist %dropBoxLocation% (
 )
 
 REM ========================================================
+REM System Check
+psexec.exe > nul
+if errorlevel 9009 (
+	echo psexec.exe not installed or on path.
+	goto :fatalerror
+)
+
+REM ========================================================
 REM Configure
 
 set remote_agent=local_%master_agent%
@@ -210,7 +218,7 @@ for /F "eol=;" %%i in (%groupFile%) do (
   ( copy agent\%master_agent% \\%%i\C$\windows\temp\%remote_agent% 2>&1 )  
   if not errorlevel 1 ( 
     ( echo Remote executing wuf agent on %%i  2>&1)
-	( psexec %ATTACHED% -s \\%%i -w C:\Windows\Temp c:\windows\system32\cscript.exe //NoLogo c:\windows\temp\%remote_agent% %action% /oN:%dropBoxLocation%\%%i%dropResultPostfix% /pS:%dropBoxLocation% %restart% 2>&1) 
+	( psexec %ATTACHED% -s \\%%i -w C:\Windows\Temp c:\windows\system32\cscript.exe //NoLogo c:\windows\temp\%remote_agent% %action% /oN:%dropBoxLocation%\%%i%dropResultPostfix% /pS:%dropBoxLocation% %restart% 2>&1)
   ) else (
 	( echo %%i >> dead.txt)
   )
