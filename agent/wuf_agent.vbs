@@ -1772,7 +1772,7 @@ Class ResultWriter
 	End Function
 	
 	'---------------------------------------------------------------------------------
-	Function recordUpdateList( objSearchResult )
+	Function getUpdateListString( objSearchResult )
 		
 		Dim searchList
 		searchList = ""
@@ -1783,9 +1783,10 @@ Class ResultWriter
 			Set update = objSearchResult.Updates.Item(i)
 			
 			updateLine = "{" & update.title & _
+				"|KB=" & update.KBArticleIDs.Item(0) & _
 				"|impact=" & update.installationBehavior.impact & _
-				"|isDownloaded=" & update.isDownloaded & _
-				"|isInstalled=" & update.isInstalled & _
+				"|isDl=" & update.isDownloaded & _
+				"|isInst=" & update.isInstalled & _
 				"}"
 			If (i = 0 ) Then
 				searchlist = updateLine
@@ -1794,7 +1795,7 @@ Class ResultWriter
 			End If
 		Next
 		
-		call stream.writeLine( getPair("search.result.list", searchList) )
+		getUpdateListString = searchlist
 	End Function
 	
 	'---------------------------------------------------------------------------------
@@ -1805,7 +1806,9 @@ Class ResultWriter
 		stream.writeLine( getPair( "search.result.code", _
 			getOperationResultMsg( objSearchResult.ResultCode) ) )
 		
-		recordUpdateList(objSearchResult)
+		getUpdateListString(objSearchResult)
+		call stream.writeLine( getPair("search.result.list",_
+			getUpdateListString(objSearchResult)) )
 	End Function
 	
 	'---------------------------------------------------------------------------------
@@ -1825,9 +1828,10 @@ Class ResultWriter
 			Dim update, updateLine, dlLine
 			Set update = objUpdates.Item(i)
 
-			dlLine = update.title & _
-				"|" & getOperationResultMsg(objResults.GetUpdateResult(i).ResultCode) & _
-				"|" & hex( objResults.GetUpdateResult(i).HResult )
+			dlLine = "{" & update.title & _
+				"|KB=" & update.KBArticleIDs.Item(0) & _
+				"|Res=" & getOperationResultMsg(objResults.GetUpdateResult(i).ResultCode) & _
+				"|HResult=0x" & hex( objResults.GetUpdateResult(i).HResult ) & "}"
 			If (i = 0 ) Then
 				dlList = dlLine
 			Else
