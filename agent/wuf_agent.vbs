@@ -24,9 +24,9 @@ Option Explicit
 
 'Settings------------------------------
 Const LOG_LEVEL = 3
-Const WUF_CATCH_ALL_EXCEPTIONS = 1
+Const WUF_CATCH_ALL_EXCEPTIONS = 0
 Const WUF_ASYNC = True
-Const WUF_SHUTDOWN_DELAY = 60
+Const WUF_DEFAULT_SHUTDOWN_DELAY = 15
 Const ASYNC_REFRESH_RATE = 1000
 Const ASYNC_REFRESH_MODERATION = 10
 '--------------------------------------
@@ -80,8 +80,8 @@ Const WUF_DEFAULT_SHUTDOWN_OPTION = 0
 
 Const WUF_DEFAULT_LOG_LOCATION = "." '@TODO change this to use . for default and add log location command line arg
 
-Const WUF_USAGE = "wuf_agent.vbs [/aA | /aS | /aD | /aI] [/sN | /sR | /sH] [/c:<criteria> [/pS:<dir>] [/fS] [/oN:<location_name>]"
-Const WUF_USAGE2 = "/a* - action, /s* - shutdown action, /fS - force shutdown /c - update criteria, /pS - result pill, oN - result location"
+Const WUF_USAGE = "wuf_agent.vbs [/aA | /aS | /aD | /aI] [/sN | /sR | /sH] [/c:<criteria> [/pS:<dir>] [/fS] [/oN:<location_name>] [t:<shut_delay>]"
+Const WUF_USAGE2 = "/a* - action, /s* - shutdown action, /fS - force shutdown /c - update criteria, /pS - result pill, oN - result location, s - shutdown delay"
 
 'Globals - avoid modification after initialize()
 Dim stdErr, stdOut	'std stream access
@@ -98,7 +98,8 @@ Dim gObjDummyDict	'Used for async wu operations
 Dim gResOut			'Result writer
 Dim gBooUsePill		'Whether to use the result pill or not
 Dim gPillDir		'Result Pill Directory
-Dim gSearchCriteria 
+Dim gSearchCriteria 'The Windows Update search criteria
+Dim gShutDownDelay	'Time to wait before taking aciton
 Dim e				'Exception manager
 
 Set e = New ExceptionManager.init()
@@ -201,6 +202,7 @@ Function initialize()
 	gShutdownOption = WUF_DEFAULT_SHUTDOWN_OPTION
 	gForceShutdown = WUF_DEFAULT_FORCE_SHUTDOWN_ACTION
 	gSearchCriteria = WUF_DEFAULT_SEARCH_CRITERIA
+	gShutDownDelay = WUF_DEFAULT_SHUTDOWN_DELAY
 
 End Function
 
@@ -258,20 +260,20 @@ Function parseArgs()
 			Dim strArrTemp
 			If ( headStrI(arg,"a") ) Then
 				If Not ( parseAction(arg) ) Then
-					Err.Raise WUF_INPUT_ERROR, "Wuf.parseArgs()", "Invalid action " & arg
+					Err.Raise WUF_INPUT_ERROR, "parseArgs()", "Invalid action " & arg
 				End If
 			ElseIf ( headStrI(arg,"s") ) Then 
 				If (booShutdownFlag) Then 
-					Err.Raise WUF_INPUT_ERROR, "Wuf.parseArgs()", "More than one shutdown option."
+					Err.Raise WUF_INPUT_ERROR, "parseArgs()", "More than one shutdown option."
 				End If
 				If Not( parseShutdownOption(arg) ) Then
-					Err.Raise WUF_INPUT_ERROR, "Wuf.parseArgs()", "Invalid shutdown option."
+					Err.Raise WUF_INPUT_ERROR, "parseArgs()", "Invalid shutdown option."
 				Else
 					booShutdownFlag = true
 				End If
 			ElseIf ( headStrI(arg,"f") ) Then
 				If Not( parseForceShutdown(arg) ) Then
-					Err.Raise WUF_INPUT_ERROR, "Wuf.parseArgs()", "Invalid force option."
+					Err.Raise WUF_INPUT_ERROR, "parseArgs()", "Invalid force option."
 				End If
 			ElseIf ( headStrI(arg,"o") ) Then
 				booUseResultFile = true
@@ -281,15 +283,23 @@ Function parseArgs()
 				gPillDir = parsePillOption(arg)
 			ElseIf ( headStrI(arg,"c") ) Then
 				gSearchCriteria = Wscript.Arguments.Named( arg )
+			ElseIf ( strCompI(arg,"t") ) Then
+				Dim strDelay
+				strDelay = Wscript.Arguments.Named( arg )
+				If (isNumeric(strDelay)) Then
+					gShutDownDelay = Wscript.Arguments.Named( cInt(strDelay) )
+				Else
+					Err.Raise WUF_INPUT_ERROR, "parseArgs()", "Shutdown delay must be numeric"
+				End If
 			Else
 				success = false
-				Err.Raise WUF_INPUT_ERROR, "Wuf.parseArgs()", "Unknown named argument: " & arg	
+				Err.Raise WUF_INPUT_ERROR, "parseArgs()", "Unknown named argument: " & arg	
 			End If
 		Next
 		
 		For Each arg in objUnnamedArgs
 			success = false
-			Err.Raise WUF_INPUT_ERROR, "Wuf.parseArgs()", "Unknown argument: " & arg
+			Err.Raise WUF_INPUT_ERROR, "parseArgs()", "Unknown argument: " & arg
 		Next
 		
 		If (booUseResultFile) Then
@@ -305,7 +315,7 @@ Function parseArgs()
 	Else
 		' No Args
 		success = false
-		Err.Raise WUF_INPUT_ERROR, "Wuf.parseArgs()", "No arguments."	
+		Err.Raise WUF_INPUT_ERROR, "parseArgs()", "No arguments."	
 	End If
 	
 	checkConfig()
@@ -360,7 +370,7 @@ Function parseOutputOption(strArgVal) 'return boolean
 	If (strCompI(strArgVal,"oN")) Then
 		parseOutputOption = Wscript.Arguments.Named( strArgVal )
 	Else
-		Err.Raise WUF_INPUT_ERROR, "Wuf.parseArgs()", "Invalid output option."
+		Err.Raise WUF_INPUT_ERROR, "parseArgs()", "Invalid output option."
 	End If
 End Function
 
@@ -370,7 +380,7 @@ Function parsePillOption(strArgVal) 'return boolean
 	If (strCompI(strArgVal,"pS")) Then 'Sync Pill
 		parsePillOption = Wscript.Arguments.Named( strArgVal )
 	Else
-		Err.Raise WUF_INPUT_ERROR, "Wuf.parseArgs()", "Invalid pill option."
+		Err.Raise WUF_INPUT_ERROR, "parseArgs()", "Invalid pill option."
 	End If
 End Function
 
@@ -605,7 +615,7 @@ Function postAction()
 	logInfo("Performing post-actions")
 	If (rebootPlanned()) Then
 		logInfo("System shutdown action will occur.")
-		call shutDownActionDelay(gShutdownOption, WUF_SHUTDOWN_DELAY)
+		call shutDownActionDelay(gShutdownOption, WUF_DEFAULT_SHUTDOWN_DELAY)
 	End If
 	gResOut.recordShutdownPlan(rebootPlanned())
 	gResOut.recordComplete()
