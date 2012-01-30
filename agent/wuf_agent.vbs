@@ -258,11 +258,11 @@ Function parseArgs()
 		Dim i
 		For Each arg in objNamedArgs
 			Dim strArrTemp
-			If ( headStrI(arg,"a") ) Then
+			If ( headStr(arg,"a") ) Then
 				If Not ( parseAction(arg) ) Then
 					Err.Raise WUF_INPUT_ERROR, "parseArgs()", "Invalid action " & arg
 				End If
-			ElseIf ( headStrI(arg,"s") ) Then 
+			ElseIf ( headStr(arg,"s") ) Then 
 				If (booShutdownFlag) Then 
 					Err.Raise WUF_INPUT_ERROR, "parseArgs()", "More than one shutdown option."
 				End If
@@ -271,19 +271,19 @@ Function parseArgs()
 				Else
 					booShutdownFlag = true
 				End If
-			ElseIf ( headStrI(arg,"f") ) Then
+			ElseIf ( headStr(arg,"f") ) Then
 				If Not( parseForceShutdown(arg) ) Then
 					Err.Raise WUF_INPUT_ERROR, "parseArgs()", "Invalid force option."
 				End If
-			ElseIf ( headStrI(arg,"o") ) Then
+			ElseIf ( headStr(arg,"o") ) Then
 				booUseResultFile = true
 				strOutputLocation = parseOutputOption(arg)
-			ElseIf ( headStrI(arg,"p") ) Then
+			ElseIf ( headStr(arg,"p") ) Then
 				gBooUsePill = true
 				gPillDir = parsePillOption(arg)
-			ElseIf ( headStrI(arg,"c") ) Then
+			ElseIf ( strCompS(arg,"c") ) Then
 				gSearchCriteria = Wscript.Arguments.Named( arg )
-			ElseIf ( strCompI(arg,"t") ) Then
+			ElseIf ( strCompS(arg,"t") ) Then
 				Dim strDelay
 				strDelay = Wscript.Arguments.Named( arg )
 				If (isNumeric(strDelay)) Then
@@ -1502,11 +1502,29 @@ Function strCompI(strA, strB) 'returns boolean
 End Function
 
 '*******************************************************************************
+Function strCompS(strA, strB) 'returns boolean
+	If (strComp(strA, strB, 0) = 0) Then
+		strCompS = true
+	Else
+		strCompS = false
+	End If
+End Function
+
+'*******************************************************************************
 Function headStrI(strHay, strNeedle) ' returns boolean
 	If (inStr(1,strHay,strNeedle,VBTEXTCOMPARE) = 1) Then
 		headStrI = true
 	Else
 		headStrI = false
+	End If
+End Function
+
+'*******************************************************************************
+Function headStr(strHay, strNeedle) ' returns boolean
+	If (inStr(1,strHay,strNeedle,VBBINARYCOMPARE) = 1) Then
+		headStr = true
+	Else
+		headStr = false
 	End If
 End Function
 
