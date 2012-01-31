@@ -17,14 +17,14 @@ Option Explicit
 'along with this program.  If not, see <http://www.gnu.org/licenses/>.
 '*******************************************************************************
 
-'@@TODO:  + Fix installed update count being wrong after /aI
+'@@TODO:  
 '         + Update Impact sort logic
-'		  + Fix async status output weirness for install (too many newlines)
+'		  + Fix async status output weirdness for install (too many newlines)
 '		  + Add error wrap for async install and download, returns raw WU error
 
 'Settings------------------------------
 Const LOG_LEVEL = 3
-Const WUF_CATCH_ALL_EXCEPTIONS = 0
+Const WUF_CATCH_ALL_EXCEPTIONS = 1 '@@Set to 1 for release
 Const WUF_ASYNC = True
 Const WUF_DEFAULT_SHUTDOWN_DELAY = 15
 Const ASYNC_REFRESH_RATE = 1000
@@ -74,14 +74,14 @@ Const WUF_SHUTDOWN_RESTART = 1
 Const WUF_SHUTDOWN_SHUTDOWN = 2
 
 Const WUF_DEFAULT_SEARCH_CRITERIA = "IsAssigned=1 and IsHidden=0 and IsInstalled=0 and Type='Software'"
-Const WUF_DEFAULT_FORCE_SHUTDOWN_ACTION = false
+Const WUF_DEFAULT_FORCE_SHUTDOWN_ACTION = FALSE
 Const WUF_DEFAULT_ACTION = 1 
 Const WUF_DEFAULT_SHUTDOWN_OPTION = 0
 
 Const WUF_DEFAULT_LOG_LOCATION = "." '@TODO change this to use . for default and add log location command line arg
 
-Const WUF_USAGE = "wuf_agent.vbs [/aA | /aS | /aD | /aI] [/sN | /sR | /sH] [/c:<criteria> [/pS:<dir>] [/fS] [/oN:<location_name>] [t:<shut_delay>]"
-Const WUF_USAGE2 = "/a* - action, /s* - shutdown action, /fS - force shutdown /c - update criteria, /pS - result pill, oN - result location, s - shutdown delay"
+Const WUF_USAGE = "wuf_agent.vbs [/aA | /aS | /aD | /aI] [/sN | /sR | /sH] [/sF] [/c:<criteria>] [/pS:<dir>] [/oN:<location_name>] [t:<shut_delay>]"
+Const WUF_USAGE2 = "/a* - action, /s* - shutdown action, /sF - force shutdown /c - update criteria, /pS - result pill, /oN - result location, /t - shutdown delay, /fI - include filter, /fE - exclude filter"
 
 'Globals - avoid modification after initialize()
 Dim stdErr, stdOut	'std stream access
@@ -99,7 +99,8 @@ Dim gResOut			'Result writer
 Dim gBooUsePill		'Whether to use the result pill or not
 Dim gPillDir		'Result Pill Directory
 Dim gSearchCriteria 'The Windows Update search criteria
-Dim gShutDownDelay	'Time to wait before taking aciton
+Dim gShutDownDelay	'Time to wait before taking action
+Dim gUpdateFilter
 Dim e				'Exception manager
 
 Set e = New ExceptionManager.init()
@@ -197,12 +198,14 @@ Function initialize()
 	Call gObjDummyDict.Add("DummyFunction", New DummyClass)
 	
 	gLogLocation = WUF_DEFAULT_LOG_LOCATION & "\wufa_" & gRunId & ".log"
-	Set gResOut = New ResultWriter.init()
 	gAction = WUF_ACTION_UNDEFINED
 	gShutdownOption = WUF_DEFAULT_SHUTDOWN_OPTION
 	gForceShutdown = WUF_DEFAULT_FORCE_SHUTDOWN_ACTION
 	gSearchCriteria = WUF_DEFAULT_SEARCH_CRITERIA
 	gShutDownDelay = WUF_DEFAULT_SHUTDOWN_DELAY
+	
+	Set gResOut = New ResultWriter.init()
+	Set gUpdateFilter = New UpdateFilter.init()
 
 End Function
 
@@ -227,6 +230,7 @@ Function configure()
 	call gResOut.writeId( gRunId ) 
 
 	logDebug( "Creating Update Session." )
+	
 	Set gObjUpdateSession = CreateObject( "Microsoft.Update.Session" )
 	
 End Function
@@ -271,10 +275,6 @@ Function parseArgs()
 				Else
 					booShutdownFlag = true
 				End If
-			ElseIf ( headStr(arg,"f") ) Then
-				If Not( parseForceShutdown(arg) ) Then
-					Err.Raise WUF_INPUT_ERROR, "parseArgs()", "Invalid force option."
-				End If
 			ElseIf ( headStr(arg,"o") ) Then
 				booUseResultFile = true
 				strOutputLocation = parseOutputOption(arg)
@@ -287,10 +287,14 @@ Function parseArgs()
 				Dim strDelay
 				strDelay = Wscript.Arguments.Named( arg )
 				If (isNumeric(strDelay)) Then
-					gShutDownDelay = Wscript.Arguments.Named( cInt(strDelay) )
+					gShutDownDelay = strDelay
 				Else
 					Err.Raise WUF_INPUT_ERROR, "parseArgs()", "Shutdown delay must be numeric"
 				End If
+			ElseIf ( headStr( arg,"fI" ) ) Then 'basic include filter
+				gUpdateFilter.setIncludeFilter( Wscript.Arguments.Named( arg ) )
+			ElseIf ( headStr( arg,"fE" ) ) Then 'basic exclude filter
+				gUpdateFilter.setExcludeFilter( Wscript.Arguments.Named( arg ) )
 			Else
 				success = false
 				Err.Raise WUF_INPUT_ERROR, "parseArgs()", "Unknown named argument: " & arg	
@@ -324,13 +328,13 @@ End Function
 '*******************************************************************************
 Function parseAction(strArgVal) 'return boolean
 	parseAction = True
-	If ( strCompI(strArgVal,"aA") ) Then
+	If ( strCompS(strArgVal,"aA") ) Then
 		gAction = gAction or WUF_ACTION_AUTO
-	ElseIf ( strCompI(strArgVal,"aS") ) Then
+	ElseIf ( strCompS(strArgVal,"aS") ) Then
 		gAction = gAction or WUF_ACTION_SEARCH
-	ElseIf ( strCompI(strArgVal,"aD") ) Then
+	ElseIf ( strCompS(strArgVal,"aD") ) Then
 		gAction = gAction or WUF_ACTION_DOWNLOAD
-	ElseIf ( strCompI(strArgVal,"aI") ) Then
+	ElseIf ( strCompS(strArgVal,"aI") ) Then
 		gAction = gAction or WUF_ACTION_INSTALL
 	Else
 		gAction = gAction or WUF_ACTION_UNDEFINED
@@ -342,12 +346,14 @@ End Function
 '*******************************************************************************
 Function parseShutdownOption(strArgVal) 'return boolean
 	parseShutdownOption = True
-	If (strCompI(strArgVal,"sN")) Then
+	If (strCompS(strArgVal,"sN")) Then
 		gShutdownOption = WUF_SHUTDOWN_DONT
-	ElseIf (strCompI(strArgVal, "sR")) Then
+	ElseIf (strCompS(strArgVal, "sR")) Then
 		gShutdownOption = WUF_SHUTDOWN_RESTART
-	ElseIf (strCompI(strArgVal, "sH")) Then
+	ElseIf (strCompS(strArgVal, "sH")) Then
 		gShutdownOption = WUF_SHUTDOWN_SHUTDOWN
+	ElseIf (strCompS(strArgVal, "sF")) Then
+		gForceShutdown = TRUE
 	Else
 		gShutdownOption = WUF_SHUTDOWN_UNDEFINED
 		parseShutdownOption = False
@@ -355,19 +361,9 @@ Function parseShutdownOption(strArgVal) 'return boolean
 End Function
 
 '*******************************************************************************
-Function parseForceShutdown(strArgVal) 'return boolean
-	parseForceShutdown = True
-	If (strCompI(strArgVal,"fS")) Then
-		gForceShutdown = True
-	Else
-		parseForceShutdown = False
-	End If
-End Function
-
-'*******************************************************************************
 Function parseOutputOption(strArgVal) 'return boolean
 	parseOutputOption = ""
-	If (strCompI(strArgVal,"oN")) Then
+	If (strCompS(strArgVal,"oN")) Then
 		parseOutputOption = Wscript.Arguments.Named( strArgVal )
 	Else
 		Err.Raise WUF_INPUT_ERROR, "parseArgs()", "Invalid output option."
@@ -377,7 +373,7 @@ End Function
 '*******************************************************************************
 Function parsePillOption(strArgVal) 'return boolean
 	parsePillOption = ""
-	If (strCompI(strArgVal,"pS")) Then 'Sync Pill
+	If (strCompS(strArgVal,"pS")) Then 'Sync Pill
 		parsePillOption = Wscript.Arguments.Named( strArgVal )
 	Else
 		Err.Raise WUF_INPUT_ERROR, "parseArgs()", "Invalid pill option."
@@ -472,20 +468,20 @@ Function doAction(intAction)
 End Function
 
 '*******************************************************************************
-Function wuDownloadOp(objSearchResult, booAsync)
+Function wuDownloadOp(objUpdates, booAsync)
 		If (booAsync) Then
-			Set wuDownloadOp = wuDownloadAsync(objSearchResult)
+			Set wuDownloadOp = wuDownloadAsync(objUpdates)
 		Else
-			Set wuDownloadOp = wuDownload(objSearchResult)
+			Set wuDownloadOp = wuDownload(objUpdates)
 		End If
 End Function
 
 '*******************************************************************************
-Function wuInstallOp(objSearchResult, booAsync)
+Function wuInstallOp(objUpdates, booAsync)
 		If (booAsync) Then
-			Set wuInstallOp = wuInstallAsync(objSearchResult)
+			Set wuInstallOp = wuInstallAsync(objUpdates)
 		Else
-			Set wuInstallOp = wuInstall(objSearchResult)
+			Set wuInstallOp = wuInstall(objUpdates)
 		End If
 End Function
 
@@ -493,10 +489,14 @@ End Function
 Function wuDownloadWrapper(objSearchResult)
 
 	Dim downloadResults
+	
+	Dim objFilteredUpdates
+	
+	Set objFilteredUpdates = gUpdateFilter.filter(objSearchResult.Updates)
 		
-	If (WUF_CATCH_ALL_EXCEPTIONS = 0) Then
+	If (WUF_CATCH_ALL_EXCEPTIONS = 1) Then
 		On Error Resume Next
-			Set downloadResults = wuDownloadOp(objSearchResult, WUF_ASYNC)
+			Set downloadResults = wuDownloadOp(objFilteredUpdates, WUF_ASYNC)
 		e.catch() 'catch
 		On Error GoTo 0
 		If (e.isException()) Then
@@ -518,11 +518,11 @@ Function wuDownloadWrapper(objSearchResult)
 			
 		End If
 	Else
-		Set downloadResults = wuDownloadOp(objSearchResult, WUF_ASYNC)
+		Set downloadResults = wuDownloadOp(objFilteredUpdates, WUF_ASYNC)
 	End If
 		
-	call logDownloadResult(objSearchResult.updates, downloadResults)
-	call gResOut.recordDownloadResult(objSearchResult.updates, downloadResults)
+	call logDownloadResult(objFilteredUpdates, downloadResults)
+	call gResOut.recordDownloadResult(objFilteredUpdates, downloadResults)
 	
 End Function
 
@@ -531,9 +531,17 @@ Function wuInstallWrapper(objSearchResult)
 
 	Dim installResult
 	
-	If (WUF_CATCH_ALL_EXCEPTIONS = 0) Then
+	Dim objFilteredUpdates
+	
+	Set objFilteredUpdates = gUpdateFilter.filter(objSearchResult.Updates)
+	
+	gResOut.recordMissingDownloads(countMissingUpdates(objSearchResult)) 
+		
+	logInfo ( "Number of updates to be installed that are downloaded: " & objFilteredUpdates.count )
+	
+	If (WUF_CATCH_ALL_EXCEPTIONS = 1) Then
 		On Error Resume Next
-			Set installResult = wuInstallOp(objSearchResult, WUF_ASYNC)
+			Set installResult = wuInstallOp(objFilteredUpdates, WUF_ASYNC)
 		e.catch() 'catch
 		On Error GoTo 0
 		If (e.isException()) Then
@@ -554,11 +562,11 @@ Function wuInstallWrapper(objSearchResult)
 			Err.Raise newEx.number, newEx.Source, newEx.Description
 		End If		
 	Else
-		Set installResult = wuInstallOp(objSearchResult, WUF_ASYNC)
+		Set installResult = wuInstallOp(objFilteredUpdates, WUF_ASYNC)
 	End If
 
-	call logInstallationResult(objSearchResult.updates,installResult)
-	call gResOut.recordInstallationResult(objSearchResult.updates, installResult )
+	call logInstallationResult(objFilteredUpdates,installResult)
+	call gResOut.recordInstallationResult(objFilteredUpdates, installResult )
 	
 End Function
 
@@ -715,7 +723,7 @@ Function wuSearch(strFilter) 'return ISearchResult
 End Function
 
 '*******************************************************************************
-Function wuDownload(objSearchResult)
+Function wuDownload(objUpdates)
 
 	Dim downloader
 	Dim objDownloadResult
@@ -723,7 +731,7 @@ Function wuDownload(objSearchResult)
 	logDebug("Creating update downloader.")
 	
 	Set downloader = gObjUpdateSession.CreateUpdateDownloader() 
-	downloader.Updates = objSearchResult.Updates
+	downloader.Updates = objUpdates
 	
 	logInfo("Downloading updates")
 	
@@ -740,20 +748,16 @@ End Function
 
 
 '*******************************************************************************
-Function wuDownloadAsync(objSearchResult)
+Function wuDownloadAsync(objUpdates)
 
 	Dim downloader, dlJob, dlProgress
 	Dim objDownloadResult
 	Dim count
-	Dim updates
 	
 	logDebug("Creating update downloader.")
 	
-	Set downloader = gObjUpdateSession.CreateUpdateDownloader() 
-	Set updates = objSearchResult.Updates
-	downloader.Updates = updates
-	'@@TODO Try to avoid downloading updates already available. Problem is the IUpdate.isDownloaded method is
-	'not reliable. No solution yet, it attempts to download everything searched.
+	Set downloader = gObjUpdateSession.CreateUpdateDownloader()
+	downloader.Updates = objUpdates
 	
 	logInfo("Downloading Updates Asynchronously")
 
@@ -765,11 +769,11 @@ Function wuDownloadAsync(objSearchResult)
 	outputModerator = ASYNC_REFRESH_MODERATION ' slow file output by factor of...
 	Dim i
 	i = 0
-	While Not getAsyncWuOpJoinable(updates, dlJob)  
+	While Not getAsyncWuOpJoinable(objUpdates, dlJob)  
 		Set dlProgress = dlJob.getProgress()
-		Call gResOut.refreshDownloadStatus(dlProgress, updates)
+		Call gResOut.refreshDownloadStatus(dlProgress, objUpdates)
 		If (i = 0) Then
-			Call gResOut.recordDownloadStatus(dlProgress, updates)
+			Call gResOut.recordDownloadStatus(dlProgress, objUpdates)
 			logInfo( "Download Progress: " & dlProgress.percentcomplete & "%" )
 		End IF
 		i = (i+1) Mod outputModerator
@@ -830,14 +834,9 @@ Function forceInstallerQuiet(objInstaller)
 End Function
 
 '*******************************************************************************
-Function wuInstall(objSearchResult)
+Function wuInstall(objUpdates)
 
-	Dim updatesToInstall
 	Dim installationResult
-	
-	Set updatesToInstall = objSearchResult.Updates
-	
-	gResOut.recordMissingDownloads( countMissingUpdates(objSearchResult) )
 	
 	logDebug("Creating Update Installer.")
 	
@@ -847,7 +846,7 @@ Function wuInstall(objSearchResult)
 
 	forceInstallerQuiet(installer)
 	
-	installer.Updates = updatesToInstall
+	installer.Updates = objUpdates
 	
 	logInfo("Installing updates.")
 	
@@ -862,16 +861,9 @@ Function wuInstall(objSearchResult)
 End Function
 
 '*******************************************************************************
-Function wuInstallAsync(objSearchResult)
+Function wuInstallAsync(objUpdates)
 	Dim installJob, installProgress
 	Dim objInstallResult
-	
-	Dim updatesToInstall
-	Set updatesToInstall = objSearchResult.Updates
-	
-	gResOut.recordMissingDownloads(countMissingUpdates(objSearchResult))
-		
-	logInfo ( "Number of updates to be installed that are downloaded: " & updatesToInstall.count )
 
 	logDebug( "Creating Update Installer." )
 	
@@ -881,7 +873,7 @@ Function wuInstallAsync(objSearchResult)
 
 	forceInstallerQuiet(installer)
 	
-	installer.Updates = updatesToInstall
+	installer.Updates = objUpdates
 	
 	logInfo("Installing updates.")
 	
@@ -895,9 +887,9 @@ Function wuInstallAsync(objSearchResult)
 	i = 0
 	While Not getAsyncWuOpJoinable(installer.Updates, installJob) 
 		set installProgress = installJob.getProgress()
-		call gResOut.refreshInstallStatus(installProgress,updatesToInstall)
+		call gResOut.refreshInstallStatus(installProgress,objUpdates)
 		If (i = 0) Then
-			Call gResOut.recordInstallStatus(installProgress, updatesToInstall)
+			Call gResOut.recordInstallStatus(installProgress, objUpdates)
 			logInfo( "Install Progress: " & installProgress.percentcomplete & "%" )
 		End IF
 		WScript.Sleep(ASYNC_REFRESH_RATE)
@@ -1568,6 +1560,74 @@ Function generateShadowLocation()
 	generateShadowLocation = tempDir & "\" & gRunId & ".tmp"
 
 End Function
+
+'===============================================================================
+'===============================================================================
+Class UpdateFilter
+	Dim strInclude
+	Dim strExclude
+	
+	Function init()
+	
+		strInclude = ""
+		strExclude = ""
+	
+		Set init = me
+		
+	End Function
+	
+	Function setIncludeFilter(strFilter)
+		strInclude = strFilter
+	End Function
+	
+	Function setExcludeFilter(strFilter)
+		strExclude = strFilter
+	End Function
+	
+	Function filter(objUpdateColl)
+	
+		Dim objFiltered
+		
+		Set objFiltered = CreateObject("Microsoft.Update.UpdateColl")
+		
+		Dim update
+		Dim i
+		For i = 0 To ( objUpdateColl.Count-1 )
+			
+			Set update = objUpdateColl.Item(i)
+			If ( isIncluded( update ) and (NOT isExcluded( update )) ) Then
+				objFiltered.add(update)
+			End If
+		Next
+		Set filter = objFiltered
+		
+	End Function
+	
+	Private Function isIncluded( objUpdate )
+		If ( strInclude = "") Then
+			isIncluded = TRUE
+		ElseIf ( strInclude = "*" ) Then
+			isIncluded = TRUE
+		ElseIf ( inStr ( ucase(objUpdate.title), ucase(strInclude)) ) Then
+			isIncluded = TRUE
+		Else
+			isIncluded = FALSE
+		End If
+	End Function
+	
+	Private Function isExcluded( objUpdate )
+		If ( strExclude = "") Then
+			isExcluded= FALSE
+		ElseIf ( strExclude = "*" ) Then
+			isExcluded= TRUE
+		ElseIf ( inStr ( ucase(objUpdate.title), ucase(strExclude)) ) Then
+			isExcluded= TRUE
+		Else
+			isExcluded= FALSE
+		End If
+	End Function
+	
+End Class
 
 '===============================================================================
 '===============================================================================
