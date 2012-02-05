@@ -50,17 +50,18 @@ Const WSUS_REG_KEY_PATH = "SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate"
 Const WSUS_REG_KEY_WUSERVER = "WUServer"
 Const WSUS_REG_KEY_TARGET_GROUP = "TargetGroup"
 
-Const WUF_INPUT_ERROR = 10001
-Const WUF_FEEDBACK_ERROR = 10002
-Const WUF_NO_UPDATES = 10003
-Const WUF_INVALID_CONFIGURATION = 10004
-Const WUF_SEARCH_ERROR = 10005
-Const WUF_DOWNLOAD_ERROR = 10006
-Const WUF_INSTALL_ERROR = 10007
-Const WUF_GENERIC_ERROR = 10008
-Const WUF_VERIFY_ERROR = 10009
-Const WUF_STREAM_ERROR = 10010
-Const WUF_COMMAND_ERROR = 10011
+Const WUF_INPUT_ERROR = 			10001
+Const WUF_FEEDBACK_ERROR = 			10002
+Const WUF_NO_UPDATES = 				10003
+Const WUF_INVALID_CONFIGURATION = 	10004
+Const WUF_SEARCH_ERROR = 			10005
+Const WUF_DOWNLOAD_ERROR = 			10006
+Const WUF_INSTALL_ERROR = 			10007
+Const WUF_GENERIC_ERROR = 			10008
+Const WUF_VERIFY_ERROR = 			10009
+Const WUF_STREAM_ERROR = 			10010
+Const WUF_COMMAND_ERROR = 			10011
+Const WUF_LOCK_ERROR = 				10012
 
 Const WUF_ACTION_UNDEFINED = 0
 Const WUF_ACTION_AUTO = 	1
@@ -77,6 +78,7 @@ Const WUF_DEFAULT_SEARCH_CRITERIA = "IsAssigned=1 and IsHidden=0 and IsInstalled
 Const WUF_DEFAULT_FORCE_SHUTDOWN_ACTION = FALSE
 Const WUF_DEFAULT_ACTION = 1 
 Const WUF_DEFAULT_SHUTDOWN_OPTION = 0
+Const WUF_LOCK_LOCATION = "c:\windows\temp\wuf.lck"
 
 Const WUF_DEFAULT_LOG_LOCATION = "." '@TODO change this to use . for default and add log location command line arg
 
@@ -101,6 +103,7 @@ Dim gPillDir		'Result Pill Directory
 Dim gSearchCriteria 'The Windows Update search criteria
 Dim gShutDownDelay	'Time to wait before taking action
 Dim gUpdateFilter
+Dim gProcLock		'Process Lock
 Dim e				'Exception manager
 
 Set e = New ExceptionManager.init()
@@ -167,6 +170,7 @@ Function main()
 		core()
 	End If
 	
+	cleanup()
 	WScript.quit
 End Function
 
@@ -178,7 +182,6 @@ Function core()
 		doAction(gAction)
 		postAction()
 	End If
-	cleanup()
 End Function
 
 '*******************************************************************************
@@ -206,6 +209,10 @@ Function initialize()
 	
 	Set gResOut = New ResultWriter.init()
 	Set gUpdateFilter = New UpdateFilter.init()
+	
+	Dim intProcId 
+	intProcId = CurrProcessId()
+	Set gProcLock = New ReEntrantProcessLock.init(WUF_LOCK_LOCATION, intProcId)
 
 End Function
 
@@ -221,6 +228,8 @@ Function configure()
 	
 	logInfo( "Run Id: " & gRunId )
 	
+	checkLock()
+	
 	logDebug( "Parsing Configuration" )
 	
 	call gResOut.writeTitle( APP_NAME, APP_VERSION )
@@ -235,6 +244,18 @@ Function configure()
 	
 End Function
 
+'*******************************************************************************
+Function checkLock()
+	Dim booLocked
+	
+	booLocked = Not gProcLock.tryLock()
+	If( booLocked ) Then
+		logDebug( "WUF is locked, lock is at: " & WUF_LOCK_LOCATION )
+		Err.Raise WUF_LOCK_ERROR, "checkLock", "WUF is locked, cannot run"
+	Else
+		logDebug( "Got lock" )
+	End If
+End Function
 
 '*******************************************************************************
 Function parseArgs()
@@ -633,6 +654,8 @@ End Function
 '*******************************************************************************
 Function cleanup()
 	logInfo("Cleaning up")
+	
+	gProcLock.unlock()
 
 	Set gWshShell = nothing
 	Set gWshSysEnv = nothing
@@ -744,7 +767,6 @@ Function wuDownload(objUpdates)
 	End If
 	
 End Function
-
 
 
 '*******************************************************************************
@@ -2139,6 +2161,7 @@ Class ResultWriter
 	End Sub
 End Class
 
+
 '===============================================================================
 '===============================================================================
 Class ShadowedFileOutputStreamWriter
@@ -2148,10 +2171,10 @@ Class ShadowedFileOutputStreamWriter
 	Dim fShadow
 	Dim fso
 	
+	'---------------------------------------------------------------------------------
 	'Custom Constructor - Take filename and shadow location
 	Function init(strOutputLocation, strShadowLocation)
 	
-		
 		Me.strOutputLocation = strOutputLocation
 		Me.strShadowLocation = strShadowLocation
 		
@@ -2161,9 +2184,12 @@ Class ShadowedFileOutputStreamWriter
 		Set fStream = tryCreateFile(strOutputLocation)
 		
 		Set init = Me
+		
 	End Function
 	
+	'---------------------------------------------------------------------------------
 	Function tryCreateFile(strOutputLocation)
+	
 		On Error Resume Next
 			Set tryCreateFile = fso.createTextFile( strOutputLocation, True )
 		e.catch() 'catch
@@ -2177,18 +2203,22 @@ Class ShadowedFileOutputStreamWriter
 				"Unable to write to file: " & strOutputLocation , Ex) )
 			Err.Raise newEx.number, newEx.Source, newEx.Description
 		End If
+		
 	End Function
 	
+	'---------------------------------------------------------------------------------
 	Function writeLine(strMessage)
 		fShadow.writeLine(strMessage)
 		fStream.writeLine(strMessage)
 	End Function
 	
+	'---------------------------------------------------------------------------------
 	Function write(strMessage) 
 		fShadow.writeLine(strMessage)
 		fStream.writeLine(strMessage)
 	End Function
 	
+	'---------------------------------------------------------------------------------
 	Function close()
 		If (isObject(fStream)) Then
 			fStream.close
@@ -2209,22 +2239,127 @@ Class ShadowedFileOutputStreamWriter
 		End If
 	End Function
 	
+	'---------------------------------------------------------------------------------
 	Function getLocation()
 		getLocation = strOutputLocation
 	End Function
 	
+	'---------------------------------------------------------------------------------
 	Function isUsingFile()
 		isUsingFile = Not booConsoleOnly
 	End Function
 	
+	'---------------------------------------------------------------------------------
 	Function checkFile(strLocation)
 		checkFile = fso.FileExists(strLocation)
 	End Function
 	
-	Sub Class_Terminate()
-		'close()
-	End Sub
+
 End Class
+
+
+'===============================================================================
+'===============================================================================
+Class ReEntrantProcessLock
+	Dim strLockFileLocation
+	Dim objLockFile
+	Dim fso
+	dim currPid
+	
+	Function init(strLockFileLocation, intProcessPid)
+		Me.strLockFileLocation = strLockFileLocation
+		Set fso = CreateObject("Scripting.FileSystemObject")
+		Set init = Me
+		currPid = intProcessPid
+	End Function
+	
+	Function unlock()
+		
+		If (isObject(objLockFile)) Then
+			objLockFile.close()
+			If (isLocked()) Then
+				fso.DeleteFile(strLockFileLocation)
+			End If
+		End If
+		
+	End Function
+	
+	Function tryLock()
+		If (isLocked()) Then
+			If (isHeldByCurrentProc()) Then
+				tryLock = true
+			Else
+				tryLock = false
+			End If
+		Else
+			Set objLockFile = fso.createTextFile( strLockFileLocation, False )
+			objLockFile.WriteLine(currPid)
+			tryLock = true
+		End If
+	End Function
+	
+	Function lock()
+
+		While not tryLock()
+			WScript.Sleep 10
+		Wend
+
+	End Function
+	
+	Function isHeldByCurrentProc()
+	
+		If (fso.FileExists(strLockFileLocation)) Then
+			Dim fileHandle 
+			Set fileHandle = fso.OpenTextFile(strLockFileLocation, 1, False, 0)
+			Dim pid 
+			pid = fileHandle.ReadLine()
+			If (strComp(pid,Trim(currPid)) = 0) Then
+				isHeldByCurrentProc = True
+			Else
+				isHeldByCurrentProc = False
+			End IF
+		Else
+			isHeldByCurrentProc = False
+		End If
+	
+	End Function
+	
+	Function isLocked()
+	
+		isLocked = (fso.FileExists(strLockFileLocation))
+	
+	End Function
+	
+	Sub Class_Terminate()
+		unlock()
+	End Sub
+	
+End Class
+
+'---------------------------------------------------------------------------------------
+Function CurrProcessId()
+    Dim oShell, sCmd, oWMI, oChldPrcs, oCols, lOut
+    lOut = 0
+    Set oShell  = CreateObject("WScript.Shell")
+    Set oWMI    = GetObject(_
+        "winmgmts:{impersonationLevel=impersonate}!\\.\root\cimv2")
+    Randomize
+    sCmd = "/K @echo " & Int(Rnd * 3333) * CDbl(Timer) \ 1  
+    oShell.Run "%comspec% " & sCmd, 0
+    WScript.Sleep 100
+    Set oChldPrcs = oWMI.ExecQuery(_
+        "Select * From Win32_Process Where CommandLine Like '%" & sCmd & "'", ,32)
+    For Each oCols In oChldPrcs
+        lOut = oCols.ParentProcessId 'get parent
+        oCols.Terminate 'process terminated
+        Exit For
+    Next
+    Set oChldPrcs = Nothing
+    Set oWMI = Nothing
+    Set oShell = Nothing
+    CurrProcessId = lOut
+End Function
+
 
 '===============================================================================
 '===============================================================================
@@ -2247,7 +2382,7 @@ End Class
 ' Note that code called within an error handler that re-throws (using Err.raise)
 ' must be "exception raise safe" all the way up the call chain.
 ' If your called function has an "On Error..." statement in it, that will reset
-' The global Err object, thereby losing the exception the code was handling. When
+' the global Err object, thereby losing the exception the code was handling. When
 ' The raise is called at the end of the handling to re-throw, it will throw an
 ' "non-error" Err object with code 0, which will then slip by any upstream
 ' error handlers. A nightmare to debug if it happens.
@@ -2344,7 +2479,7 @@ End Class
 
 '===============================================================================
 '===============================================================================
-' Usage: declare this at the glocal scope.
+' Usage: declare and set this at the glocal scope.
 Class ExceptionManager
 	Dim currentEx
 	
