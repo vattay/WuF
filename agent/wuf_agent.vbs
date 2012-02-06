@@ -164,7 +164,6 @@ Function main()
 				logError( e.dump(Ex) )
 				'call logErrorEx( "Unhandled exception: ", Ex)
 			End If
-			cleanup()
 		End If
 	Else
 		core()
@@ -228,8 +227,6 @@ Function configure()
 	
 	logInfo( "Run Id: " & gRunId )
 	
-	checkLock()
-	
 	logDebug( "Parsing Configuration" )
 	
 	call gResOut.writeTitle( APP_NAME, APP_VERSION )
@@ -241,6 +238,8 @@ Function configure()
 	logDebug( "Creating Update Session." )
 	
 	Set gObjUpdateSession = CreateObject( "Microsoft.Update.Session" )
+	
+	checkLock()
 	
 End Function
 
