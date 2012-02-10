@@ -38,7 +38,9 @@ The results include the number and enumeration of missing updates, the status of
 2. Set up a shared dropbox. This will usually be a network share. The network path must be writable by the SYSTEM account of every computer in the group. Be sure to check both sharing and file permissions.
 3. Run "wuf_controller.bat" with proper arguments.
 	Grammar: `wuf_controller <dropbox_path> <group_file> <action> [attached] [restart]`
+	
 	For example: `wuf_controller \\nas\wufdrop group_1.txt SCAN`
+	
 	Or: `wuf_controller \\command_comp\public\wuf_drop group_2.txt DOWNLOAD ATTACHED`
 
 ## Agent
