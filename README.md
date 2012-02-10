@@ -19,7 +19,7 @@ agent\wuf_agent.vbs
 ### Pre-requisites:
 - Psexec.exe available on command computer.
 - Psexec on PATH.
-- Folder accessible to all target computers, usuall a network share.
+- Folder accessible to all target computers, usually a network share.
 - "Run as Administrator" on Windows Vista and 7.
 
 The controller will perform windows update operations on a batch of computers. It maps a Windows Update action to a list of computer names. 
@@ -36,8 +36,9 @@ The results include the number and enumeration of missing updates, the status of
 ### Usage
 1. Create a group text file, a newline delimited file of server names that will be acted upon.
 2. Set up a shared dropbox. This will usually be a network share. The network path must be writable by the SYSTEM account of every computer in the group. Be sure to check both sharing and file permissions.
-3. Run `wuf_controller <dropbox_path> <group_file> <action>`
-4. For example `wuf_controller \\nas\wufdrop group_1.txt SCAN`
+3. Run "wuf_controller.bat" with proper arguments.
+	Grammar: `wuf_controller <dropbox_path> <group_file> <action> [attached] [restart]`
+	For example: `wuf_controller \\nas\wufdrop group_1.txt SCAN`
 	Or: `wuf_controller \\command_comp\public\wuf_drop group_2.txt DOWNLOAD ATTACHED`
 
 ## Agent
