@@ -82,7 +82,7 @@ Const WUF_LOCK_LOCATION = "c:\windows\temp\wuf.lck"
 
 Const WUF_DEFAULT_LOG_LOCATION = "." '@TODO change this to use . for default and add log location command line arg
 
-Const WUF_USAGE = "wuf_agent.vbs [/aA | /aS | /aD | /aI] [/sN | /sR | /sH] [/sF] [/c:<criteria>] [/pS:<dir>] [/oN:<location_name>] [t:<shut_delay>]"
+Const WUF_USAGE = "wuf_agent.vbs [/aA | /aS | /aD | /aI] [fI | fE] [/sN | /sR | /sH] [/sF] [/c:<criteria>] [/pS:<dir>] [/oN:<location_name>] [t:<shut_delay>]"
 Const WUF_USAGE2 = "/a* - action, /s* - shutdown action, /sF - force shutdown /c - update criteria, /pS - result pill, /oN - result location, /t - shutdown delay, /fI - include filter, /fE - exclude filter"
 
 'Globals - avoid modification after initialize()
