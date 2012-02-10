@@ -22,7 +22,23 @@ agent\wuf_agent.vbs
 - Folder accessible to all target computers, usuall a network share.
 - "Run as Administrator" on Windows Vista and 7.
 
-The controller will perform windows update operations on a batch of computers. It maps a Windows Update action to a list of computer names. The available actions are auto, scan, download, install, and di. Auto simply calls the computers Windows Automatic Updates configured behavior. Scan only checks for missing updates. Download downloads missing updates. Install installs missing updates. DI does both downloade and install actions. The results include the number and enumeration of missing updates, the status of the requested operations, start/finish time, etc.
+The controller will perform windows update operations on a batch of computers. It maps a Windows Update action to a list of computer names. 
+
+The available actions are auto, scan, download, install, and di. Auto simply calls the computers Windows Automatic Updates configured behavior. Scan only checks for missing updates. Download downloads missing updates. Install installs missing updates. DI does both downloade and install actions. 
+
+The optional "restart" argument is used to issue a restart command to the remote computer if it requires a restart after the action is complete.
+
+The "attached" argument is used to synchronously run the remote agent and capture its standard output. This is much slower than the file based results as each server must be updated in serial, rather than parallel.
+
+
+The results include the number and enumeration of missing updates, the status of the requested operations, start/finish time, etc.
+
+### Usage
+1. Create a group text file, a newline delimited file of server names that will be acted upon.
+2. Set up a shared dropbox. This will usually be a network share. The network path must be writable by the SYSTEM account of every computer in the group. Be sure to check both sharing and file permissions.
+3. Run `wuf_controller <dropbox_path> <group_file> <action>`
+4. For example `wuf_controller \\nas\wufdrop group_1.txt SCAN`
+	Or: `wuf_controller \\command_comp\public\wuf_drop group_2.txt DOWNLOAD ATTACHED`
 
 ## Agent
 

@@ -29,7 +29,7 @@ REM ========================================================
 REM Constants
 set actionString="AUTO" or "SCAN" or "DOWNLOAD" or "INSTALL"
 set master_agent=wuf_agent.vbs
-set usage=Usage^: %0% groupFile ^{Action^} [RESTART] [ATTACHED]
+set usage=Usage^: %0% dropbox_path groupFile ^{Action^} [RESTART] [ATTACHED]
 set usage2=	Action : ^( AUTO, SCAN, DOWNLOAD, INSTALL, DI ^)
 
 REM ========================================================
@@ -50,58 +50,57 @@ set cur_ms=%time:~9,2%
 rem Set the timestamp format
 set timestamp=%cur_yyyy%%cur_mm%%cur_dd%_%cur_hh%%cur_nn%%cur_ss%%cur_ms%
 
-
-REM ========================================================
-REM Conf Log ------------------------------------------
-REM if not exist log (
-REM	mkdir log
-REM )
-REM set log_file=log\controller-%timestamp%.log
-
 REM ========================================================
 REM Parse Args ---------------------------------------------
 
 echo WUF Controller
 
-if not [%5]==[] (	
+if not [%6]==[] (	
 	echo Too many arguments.  2>&1
 	goto inputerr
 )
 
 if [%1]==[] (
-	echo You must provide a groupfile.  2>&1
+	echo You must provide a dropbox UNC path.  2>&1
 	goto inputerr
 ) else (
-	set groupFile=%1
-	set groupName=%~n1
+	set dropBoxRootLocation=%1
 )
 
 if [%2]==[] (
+	echo You must provide a groupfile.  2>&1
+	goto inputerr
+) else (
+	set groupFile=%2
+	set groupName=%~n2
+)
+
+if [%3]==[] (
 	echo You must specify an action ^(%actionString%^). 2>&1
 	goto inputerr
 ) else (
-	set action_tag=%2
-	if /I "%2"=="auto" (
+	set action_tag=%3
+	if /I "%3"=="auto" (
 		set action=/aA
 		echo Action is AUTO.  2>&1
 	) else (
-		if /I "%2"=="scan" (
+		if /I "%3"=="scan" (
 			set action=/aS
 			echo Action is SCAN.  2>&1
 		) else (
-			if /I "%2"=="download" (
+			if /I "%3"=="download" (
 				set action=/aS /aD
 				echo Action is DOWNLOAD.  2>&1
 			) else (
-				if /I "%2"=="install" (
+				if /I "%3"=="install" (
 					set action=/aS /aI
 					echo Action is INSTALL.  2>&1
 				) else (
-					if /I "%2"=="di" (
+					if /I "%3"=="di" (
 						set action=/aS /aD /aI
 						echo Action is DOWNLOAD and INSTALL.  2>&1
 					) else (
-						echo Unknown action requested.  2>&1
+						echo Unknown action requested: %3  2>&1
 						goto inputerr
 					)
 				)
@@ -113,13 +112,13 @@ if [%2]==[] (
 set restart=
 set attached=-d
 set restart_tag=
-if NOT [%3]==[] (
-	if /I "%3"=="restart" (
+if NOT [%4]==[] (
+	if /I "%4"=="restart" (
 		set restart=/sR
 		set restart_tag=_r
 		echo Restart was specified.  2>&1
 	) else (
-		if /I "%3"=="attached" (
+		if /I "%4"=="attached" (
 			set attached=
 			echo Attached mode was specified.  2>&1
 		) else (
@@ -129,13 +128,13 @@ if NOT [%3]==[] (
 	)
 )
 
-if NOT [%4]==[] (
-	if /I "%4"=="restart" (
+if NOT [%5]==[] (
+	if /I "%5"=="restart" (
 		set restart=/sR
 		set restart_tag=r
 		echo Restart was specified.  2>&1
 	) else (
-		if /I "%4"=="attached" (
+		if /I "%5"=="attached" (
 			set attached=
 			echo Attached mode was specified.  2>&1
 		) else (
