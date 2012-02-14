@@ -159,6 +159,9 @@ Function main()
 			ElseIf  (Ex.number = WUF_STREAM_ERROR ) Then
 				gResOut.recordError( "Stream access problem, " & Ex.Description )
 				logError( e.dump(Ex) )
+			ElseIf  (Ex.number = WUF_LOCK_ERROR ) Then
+				gResOut.recordError( "Process lock problem, " & Ex.Description )
+				logError( e.dump(Ex) )
 			Else
 				gResOut.recordError( "Unhandled exception, " & Ex.Description )
 				logError( e.dump(Ex) )
@@ -249,7 +252,7 @@ Function checkLock()
 	booLocked = Not gProcLock.tryLock()
 	If( booLocked ) Then
 		logDebug( "WUF is locked, lock is at: " & WUF_LOCK_LOCATION )
-		Err.Raise WUF_LOCK_ERROR, "checkLock", "WUF is locked, cannot run"
+		Err.Raise WUF_LOCK_ERROR, "checkLock", "WUF is locked, cannot run."
 	Else
 		logDebug( "Got lock" )
 	End If
@@ -1929,7 +1932,6 @@ Class ResultWriter
 		stream.writeLine( getPair( "search.result.code", _
 			getOperationResultMsg( objSearchResult.ResultCode) ) )
 		
-		getUpdateListString(objSearchResult)
 		call stream.writeLine( getPair("search.result.list",_
 			getUpdateListString(objSearchResult)) )
 	End Function
@@ -2131,7 +2133,6 @@ Class ResultWriter
 		Set currentUpdate = updates.item(ip.currentUpdateIndex)
 		
 		Dim currentUpdateKb
-		'There is almost always just one KB
 		currentUpdateKb = getUpdateKB(currentUpdate)
 		
 		Dim ipPct
@@ -2279,24 +2280,39 @@ Class ReEntrantProcessLock
 	dim currPid
 	
 	Function init( strLockFileLocation, intProcessPid )
+	
 		Me.strLockFileLocation = strLockFileLocation
 		Set fso = CreateObject( "Scripting.FileSystemObject" )
 		Set init = Me
 		currPid = intProcessPid
+		
 	End Function
 	
 	Function unlock()
+
+		Dim isHeld
 		
-		If ( isObject( objLockFile ) ) Then
-			objLockFile.close()
-			If ( isLocked() ) Then
+		On Error Resume Next
+			isHeld = isHeldByCurrentProc()
+		e.catch()
+		On Error GoTo 0
+		If (e.isException()) Then
+			Dim Ex
+			Set Ex = e.getException()
+			Exit Function
+		End If
+		
+		If ( isHeld ) Then
+			If ( isObject( objLockFile ) ) Then
+				objLockFile.close()
+			End If	
 				fso.DeleteFile( strLockFileLocation )
-			End If
 		End If
 		
 	End Function
 	
 	Function tryLock()
+
 		If ( isLocked() ) Then
 			If ( isHeldByCurrentProc() ) Then
 				tryLock = true
@@ -2308,6 +2324,7 @@ Class ReEntrantProcessLock
 			objLockFile.WriteLine( currPid )
 			tryLock = true
 		End If
+		
 	End Function
 	
 	Function lock()
@@ -2320,11 +2337,28 @@ Class ReEntrantProcessLock
 	
 	Function isHeldByCurrentProc()
 	
-		If (fso.FileExists(strLockFileLocation)) Then
+		If ( isLocked() ) Then
 			Dim fileHandle 
 			Set fileHandle = fso.OpenTextFile(strLockFileLocation, 1, False, 0)
 			Dim pid 
-			pid = fileHandle.ReadLine()
+			
+			On Error Resume Next
+				pid = fileHandle.ReadLine()
+			e.catch() 'catch
+			On Error GoTo 0
+			If (e.isException()) Then
+				Dim Ex
+				Set Ex = e.getException()
+				
+				Dim strMsg
+				strMsg = "Could not read pid from lock file."
+				
+				Dim newEx
+				Set newEx = e.preRaise( New ErrWrap.initExM( WUF_LOCK_ERROR, _
+				"ReEntrantLockProcessLock.isHeldByCurrentProc()", strMsg , Ex) )
+				Err.Raise newEx.number, newEx.Source, newEx.Description
+			End If
+			
 			If (strComp(pid,Trim(currPid)) = 0) Then
 				isHeldByCurrentProc = True
 			Else
@@ -2338,7 +2372,7 @@ Class ReEntrantProcessLock
 	
 	Function isLocked()
 	
-		isLocked = (fso.FileExists(strLockFileLocation))
+		isLocked = fso.FileExists( strLockFileLocation )
 	
 	End Function
 	
