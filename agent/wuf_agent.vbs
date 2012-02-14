@@ -151,7 +151,7 @@ Function main()
 				gResOut.recordError( "Search Problem, " & Ex.Description )
 				logError( e.dump(Ex) )
 			ElseIf  (Ex.number = WUF_DOWNLOAD_ERROR ) Then
-				gResOut.recordError( "Search Problem, " & Ex.Description )
+				gResOut.recordError( "Download Problem, " & Ex.Description )
 				logError( e.dump(Ex) )
 			ElseIf  (Ex.number = WUF_INSTALL_ERROR ) Then
 				gResOut.recordError( "Install Problem, " & Ex.Description )
@@ -160,9 +160,8 @@ Function main()
 				gResOut.recordError( "Stream access problem, " & Ex.Description )
 				logError( e.dump(Ex) )
 			Else
-				gResOut.recordError(Ex.Description)
+				gResOut.recordError( "Unhandled exception, " & Ex.Description )
 				logError( e.dump(Ex) )
-				'call logErrorEx( "Unhandled exception: ", Ex)
 			End If
 		End If
 	Else
@@ -2263,8 +2262,8 @@ Class ShadowedFileOutputStreamWriter
 	End Function
 	
 	'---------------------------------------------------------------------------------
-	Function checkFile(strLocation)
-		checkFile = fso.FileExists(strLocation)
+	Function checkFile( strLocation )
+		checkFile = fso.FileExists( strLocation )
 	End Function
 	
 
@@ -2279,34 +2278,34 @@ Class ReEntrantProcessLock
 	Dim fso
 	dim currPid
 	
-	Function init(strLockFileLocation, intProcessPid)
+	Function init( strLockFileLocation, intProcessPid )
 		Me.strLockFileLocation = strLockFileLocation
-		Set fso = CreateObject("Scripting.FileSystemObject")
+		Set fso = CreateObject( "Scripting.FileSystemObject" )
 		Set init = Me
 		currPid = intProcessPid
 	End Function
 	
 	Function unlock()
 		
-		If (isObject(objLockFile)) Then
+		If ( isObject( objLockFile ) ) Then
 			objLockFile.close()
-			If (isLocked()) Then
-				fso.DeleteFile(strLockFileLocation)
+			If ( isLocked() ) Then
+				fso.DeleteFile( strLockFileLocation )
 			End If
 		End If
 		
 	End Function
 	
 	Function tryLock()
-		If (isLocked()) Then
-			If (isHeldByCurrentProc()) Then
+		If ( isLocked() ) Then
+			If ( isHeldByCurrentProc() ) Then
 				tryLock = true
 			Else
 				tryLock = false
 			End If
 		Else
 			Set objLockFile = fso.createTextFile( strLockFileLocation, False )
-			objLockFile.WriteLine(currPid)
+			objLockFile.WriteLine( currPid )
 			tryLock = true
 		End If
 	End Function
