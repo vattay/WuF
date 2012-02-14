@@ -1881,6 +1881,21 @@ Class ResultWriter
 	End Function
 	
 	'---------------------------------------------------------------------------------
+	Function getUpdateKB( objUpdate )
+		If ( isObject(objUpdate.KBArticleIDs) ) Then
+			If ( objUpdate.KBArticleIDs.Count = 0 ) Then
+				getUpdateKB = "?"
+				Exit Function
+			Else
+				getUpdateKB = objUpdate.KBArticleIDs.Item(0)
+			End If
+		Else
+			getUpdateKB = "?"
+			Exit Function
+		End If
+	End Function
+	
+	'---------------------------------------------------------------------------------
 	Function getUpdateListString( objSearchResult )
 		
 		Dim searchList
@@ -1891,11 +1906,11 @@ Class ResultWriter
 			Dim update, updateLine
 			Set update = objSearchResult.Updates.Item(i)
 			
-			updateLine = "{" & update.title & _
-				"|KB=" & update.KBArticleIDs.Item(0) & _
-				"|impact=" & update.installationBehavior.impact & _
-				"|isDl=" & update.isDownloaded & _
-				"|isInst=" & update.isInstalled & _
+			updateLine = "{" 	& update.title & _
+				"|KB=" 			& getUpdateKB(update) & _
+				"|impact=" 		& update.installationBehavior.impact & _
+				"|isDl=" 		& update.isDownloaded & _
+				"|isInst=" 		& update.isInstalled & _
 				"}"
 			If (i = 0 ) Then
 				searchlist = updateLine
@@ -1938,7 +1953,7 @@ Class ResultWriter
 			Set update = objUpdates.Item(i)
 
 			dlLine = "{" & update.title & _
-				"|KB=" & update.KBArticleIDs.Item(0) & _
+				"|KB=" & getUpdateKB(update) & _
 				"|Res=" & getOperationResultMsg(objResults.GetUpdateResult(i).ResultCode) & _
 				"|HResult=0x" & hex( objResults.GetUpdateResult(i).HResult ) & "}"
 			If (i = 0 ) Then
@@ -2084,8 +2099,7 @@ Class ResultWriter
 		Set currentUpdate = updates.item(dp.currentUpdateIndex)
 		
 		Dim currentUpdateKb
-		'There is almost always just one KB
-		currentUpdateKb = currentUpdate.KBArticleIDs.Item(0) 
+		currentUpdateKb = getUpdateKB(currentUpdate) 
 		
 		Dim dlSize
 		dlSize = cLng(dp.currentUpdateBytesToDownload) / 1000
@@ -2119,7 +2133,7 @@ Class ResultWriter
 		
 		Dim currentUpdateKb
 		'There is almost always just one KB
-		currentUpdateKb = currentUpdate.KBArticleIDs.Item(0) 
+		currentUpdateKb = getUpdateKB(currentUpdate)
 		
 		Dim ipPct
 		ipPct = ip.CurrentUpdatePercentComplete
