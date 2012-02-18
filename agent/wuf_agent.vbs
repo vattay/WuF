@@ -703,7 +703,7 @@ Function wuSearch(strFilter) 'return ISearchResult
 			strMsg = "Update server name could not be resolved."
 		ElseIf (Ex = cLng("&H80072EFD") ) Then 
 			strDsc = "ERROR_INTERNET_CANNOT_CONNECT - The attempt to connect to the server failed."
-			strMsg = "Unable to connect to udpate server"
+			strMsg = "Unable to connect to update server"
 		ElseIf (Ex = cLng("&H8024401B") ) Then 
 			strDsc = "SUS_E_PT_HTTP_STATUS_PROXY_AUTH_REQ - Http status 407 - proxy authentication required" 
 			strMsg = "407 Proxy Authentication is required."
