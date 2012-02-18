@@ -140,30 +140,30 @@ Function main()
 				strMsg = "Insufficient access, try running as administrator." 
 				gResOut.recordError( strMsg )
 			ElseIf (Ex.number = WUF_INPUT_ERROR) Then
-				gResOut.recordError( "Improper input, " & Ex.Description )
+				gResOut.recordError( "(Improper input) " & Ex.Description )
 				gResOut.recordInfo( WUF_USAGE )
 				gResOut.recordInfo( WUF_USAGE2 )
 			ElseIf  (Ex.number = WUF_INVALID_CONFIGURATION ) Then
-				gResOut.recordError( "Invalid Configuration, " & Ex.Description )
+				gResOut.recordError( "(Invalid Configuration) " & Ex.Description )
 				gResOut.recordInfo( WUF_USAGE )
 				gResOut.recordInfo( WUF_USAGE2 )
 			ElseIf  (Ex.number = WUF_SEARCH_ERROR ) Then
-				gResOut.recordError( "Search Problem, " & Ex.Description )
+				gResOut.recordError( "(Search) " & Ex.Description )
 				logError( e.dump(Ex) )
 			ElseIf  (Ex.number = WUF_DOWNLOAD_ERROR ) Then
-				gResOut.recordError( "Download Problem, " & Ex.Description )
+				gResOut.recordError( "(Download) " & Ex.Description )
 				logError( e.dump(Ex) )
 			ElseIf  (Ex.number = WUF_INSTALL_ERROR ) Then
-				gResOut.recordError( "Install Problem, " & Ex.Description )
+				gResOut.recordError( "(Install) " & Ex.Description )
 				logError( e.dump(Ex) )
 			ElseIf  (Ex.number = WUF_STREAM_ERROR ) Then
-				gResOut.recordError( "Stream access problem, " & Ex.Description )
+				gResOut.recordError( "(Stream Access) " & Ex.Description )
 				logError( e.dump(Ex) )
 			ElseIf  (Ex.number = WUF_LOCK_ERROR ) Then
-				gResOut.recordError( "Process lock problem, " & Ex.Description )
+				gResOut.recordError( "(Process Lock) " & Ex.Description )
 				logError( e.dump(Ex) )
 			Else
-				gResOut.recordError( "Unhandled exception, " & Ex.Description )
+				gResOut.recordError( "(Unhandled exception) " & Ex.Description )
 				logError( e.dump(Ex) )
 			End If
 		End If
@@ -508,7 +508,7 @@ Function wuInstallOp(objUpdates, booAsync)
 End Function
 
 '*******************************************************************************
-Function wuDownloadWrapper(objSearchResult)
+Function wuDownloadWrapper(objSearchResult) 'returns nothing
 
 	Dim downloadResults
 	
@@ -696,7 +696,7 @@ Function wuSearch(strFilter) 'return ISearchResult
 		Dim strMsg
 		If (Ex = cLng("&H80072F78") ) Then
 			strDsc = "ERROR_HTTP_INVALID_SERVER_RESPONSE - The server response could not be parsed."
-			strMsg = "The server response could not be parsed."
+			strMsg = "The update server response could not be parsed."
 		ElseIf (Ex = cLng("&H8024402C") ) Then
 			strDsc = "WU_E_PT_WINHTTP_NAME_NOT_RESOLVED - Winhttp SendRequest/ReceiveResponse failed with 0x2ee7 error. Either the proxy " _
 			& "server or target server name can not be resolved. Corresponds to ERROR_WINHTTP_NAME_NOT_RESOLVED. " 
@@ -706,7 +706,7 @@ Function wuSearch(strFilter) 'return ISearchResult
 			strMsg = "Unable to connect to update server"
 		ElseIf (Ex = cLng("&H8024401B") ) Then 
 			strDsc = "SUS_E_PT_HTTP_STATUS_PROXY_AUTH_REQ - Http status 407 - proxy authentication required" 
-			strMsg = "407 Proxy Authentication is required."
+			strMsg = "407, Proxy Authentication is required."
 		ElseIf (Ex = cLng("&H8024002B") ) Then 
 			strDsc = "WU_E_LEGACYSERVER - The Sus server we are talking to is a Legacy Sus Server (Sus Server 1.0)"
 			strMsg = "Legacy SUS servers are not supported."
