@@ -1107,8 +1107,14 @@ End Function
 '*******************************************************************************
 Function getDateStamp()
 	Dim someDate
-	someDate = Date()
-	getDateStamp = Replace(someDate,"/","")
+	Dim thisMonth, thisDay, thisYear
+	
+	thisMonth = right("0" & month(Now()),2)
+	thisDay = right("0" & day(Now()),2)
+	thisYear = right("0" & year(Now()),2)
+	
+	someDate = thisMonth & thisDay & thisYear
+	getDateStamp = someDate
 End Function
 
 '*******************************************************************************
