@@ -52,4 +52,5 @@ The results include the number and enumeration of missing updates, the status of
 The agent can be run separate from the controller. In this mode, it simply operates as a command line wrapper around WUA. It will run configured automatic operation, scan, download, or install.
 
 ## Props
+Rob Dunn who created a script with a similar concept many years ago.
 Lufi99 on technet who appears to have discovered the hack needed to get asynchronous WUA operations to work with VBScript.

@@ -21,6 +21,7 @@ Option Explicit
 Const WUFC_DEFAULT_RESULT_POSTFIX = ".result.txt"
 Const WUFC_MASTER_AGENT_LOCATION = "agent\wuf_agent.vbs"
 Const WUFC_DROPBOX_FILE_LOCATION = "dropbox.txt"
+Const WUFC_PSEXEC_TEMP_FILE  = "C:\windows\temp\wuf.psexec.out.tmp"
 
 Const WUFC_INPUT_ERROR = 10010
 
@@ -31,7 +32,11 @@ Const WUFC_USAGE_OPTIONS = "Options: ( /r | /a )"
 
 'GLOBAL ---
 Dim stdErr, stdOut, stdIn	'std stream access
+Dim sh
+Dim oFso
+
 Dim gDropBoxRootLocation
+Dim gDropBoxLocation
 Dim gDropResultPostfix
 Dim gDateTimeStamp
 Dim gStrGroupFileLocation
@@ -57,6 +62,7 @@ Function main()
 	
 	call init()
 	call config()
+	call run()
 	
 End Function
 
@@ -68,24 +74,56 @@ Function init()
 	Set stdIn = WScript.StdIn
 
 	gDropBoxRootLocation = ""
+	gDropBoxLocation = ""
 	gDropResultPostfix = WUFC_DEFAULT_RESULT_POSTFIX
 	
 	gDateTimeStamp = getDateTimeStamp()
+	
+	gBooRestart = FALSE
 	
 	gBooActionAuto = FALSE
 	gBooActionScan = FALSE
 	gBooActionDownload = FALSE
 	gBooActionInstall = FALSE
 	
+	Set oFso = CreateObject("Scripting.FileSystemObject")
+	Set sh = WScript.CreateObject("WScript.Shell")
+	
 End Function
 
 '*******************************************************************************
 Function config()
+
 	parseArgs()
 	checkConfig()
 	checkSystem()
-	run()
+	
+	'Init dead server list.
+	call sh.Run( "cmd /c echo. 2>dead.txt", 0, true )
+	
+	Dim strR
+	If ( gBooRestart ) Then strR = "R" Else strR = ""
+	
+	gDropBoxLocation = gDropBoxRootLocation & "\" & _
+		getDateTimeStamp() & "_" & _
+		oFso.getBaseName(gStrGroupFileLocation) & "_" & _
+		getActionString() & "_" & _
+		strR
+		
+	oFso.CreateFolder gDropBoxLocation
+	
+	stdOut.writeLine( "Drop box location: " & gDropBoxLocation )
 End Function
+
+'*******************************************************************************
+Function getActionString()
+	getActionString = ""
+	If ( gBooActionAuto ) Then getActionString = getActionString & "A"
+	If ( gBooActionScan ) Then getActionString = getActionString & "S"
+	If ( gBooActionDownload ) Then getActionString = getActionString & "D"
+	If ( gBooActionInstall ) Then getActionString = getActionString & "I"
+End Function
+
 
 '*******************************************************************************
 Function parseArgs()
@@ -152,8 +190,6 @@ End Function
 '*******************************************************************************
 ' Review configuration for logical problems
 Function checkConfig()
-	Dim oFso
-	Set oFso = CreateObject("Scripting.FileSystemObject")
 
 	If ( gBooActionAuto ) Then
 		If ( gBooActionScan OR gBooActionDownload OR gBooActionInstall ) Then
@@ -162,13 +198,11 @@ Function checkConfig()
 	End If
 	
 	If ( gBooRestart ) Then
-	
 		Dim choice
 		StdOut.Write "Are you sure you want to restart all of them? (y/n): "
 		choice = StdIn.ReadLine
 		
 		If ( NOT strCompI(choice, "y") ) Then abort("Quitting")
-		
 	End If
 	
 	If ( gDropBoxRootLocation = "" ) Then
@@ -196,16 +230,160 @@ End Function
 '*******************************************************************************
 Function checkSystem()
 
-	Dim WshShell, code
-	Set WshShell = WScript.CreateObject("WScript.Shell")
-	code = WshShell.Run("psexec.exe", true)
-	If ( code = 9009 ) Then abort("Psexec not available.")
-	
+	Dim code
+	code = sh.Run("psexec.exe -s echo.", 0, true)
+	If ( code = 9009 ) 	Then abort("Psexec not available.")
+	If ( code = 5 )		Then abort("Insufficient permissions, try running as admin.")
 End Function
 
 '*******************************************************************************
 Function run()
+
+	Dim arrComputers
 	'@@TODO Copy, remote exec, and delete agent
+	arrComputers = splitTextFile( gStrGroupFileLocation )
+	
+	mapAgent(arrComputers)
+	
+End Function
+
+'*******************************************************************************
+Function splitTextFile(strFileLocation)
+
+	Dim objGroupFile
+	Dim strComputers
+	Dim arrComputers
+	
+	Set objGroupFile = oFso.openTextFile( gStrGroupFileLocation,1,false,0 )
+	
+	strComputers = objGroupFile.ReadAll
+	
+	arrComputers = split( strComputers, VbCrLf )
+	
+	objGroupFile.close
+	
+	splitTextFile = arrComputers
+	
+End Function
+
+'*******************************************************************************
+Function mapAgent(arrComputers)
+
+	Dim strComputer
+	Dim strRemoteAgentName
+	Dim i, intServerCount
+	strRemoteAgentName = "local_" & oFso.getFileName( WUFC_MASTER_AGENT_LOCATION )
+	
+	WScript.echo strRemoteAgentName
+	
+	i = 0
+	intServerCount = UBound(arrComputers)
+	
+	For Each strComputer In arrComputers
+		If ( strComputer <> "" ) Then
+			stdOut.writeline strComputer & " (" & i & "/" & intServerCount & ")"
+			createStub(strComputer)
+			Dim deployCode
+			deployCode = deployAgent(strComputer, strRemoteAgentName)
+			If ( deployCode = 0 ) Then
+				call executeAgent(strComputer, gBooAttached, gBooRestart, strRemoteAgentName)
+			End If
+			i = i + 1
+		End If
+	Next
+	
+End Function
+
+'*******************************************************************************
+Function createStub(strComputer)
+
+	Dim exitCode
+	Dim strCmd
+	
+	strCmd = "cmd /c echo. 2>" & gDropBoxLocation &_
+		"\" & strComputer & WUFC_DEFAULT_RESULT_POSTFIX
+	exitCode = sh.Run( strCmd, 0, true )
+	
+End Function
+
+'*******************************************************************************
+Function deployAgent(strComputer, strRemoteAgentName)
+	
+	Dim exitCode
+	Dim strCmd
+	
+	stdOut.writeLine( "Copying agent to: " & strComputer )
+	
+	strCmd = "cmd /c copy /V " & WUFC_MASTER_AGENT_LOCATION &_
+		" \\" & strComputer & "\C$\windows\temp\" & strRemoteAgentName 
+	exitCode = sh.Run( strCmd, 0, true )
+	
+	If ( exitCode <> 0 ) Then 
+		stdErr.writeLine( "Copy failed to: " & strComputer )
+		call sh.Run( "cmd /c echo " & strComputer & " >> dead.txt", 0, True )
+	End If
+	
+	deployAgent = exitCode
+End Function
+
+'*******************************************************************************
+Function executeAgent(strComputer, booAttached, booRestart, strRemoteAgentName)
+
+	Dim exitCode
+	Dim strCmd
+	Dim strArgAttached
+	Dim strArgRestart
+	Dim strTempFileRedirect
+
+	strTempFileRedirect = ""
+	strArgAttached = "-d"
+	
+	If ( booAttached ) Then 
+		strArgAttached = ""
+		strTempFileRedirect = " 2>&1>" & WUFC_PSEXEC_TEMP_FILE
+	End If
+	
+	If ( booRestart )  Then strArgRestart = " /sR " Else strArgRestart = "" 
+
+	stdOut.writeLine( "Remote executing wuf agent on: " & strComputer )
+	
+	strCmd = "cmd /c psexec.exe -accepteula" & strArgAttached & " -s  \\" & strComputer & _
+		" -w C:\Windows\Temp c:\windows\system32\cscript.exe //B //NoLogo c:\windows\temp\" & _
+		strRemoteAgentName & " " & translateAction() & _
+		" /oN:" & gDropBoxLocation & "\" & strComputer & WUFC_DEFAULT_RESULT_POSTFIX & _
+		" /pS:" & gDropBoxLocation & _
+	    strArgRestart & strTempFileRedirect
+		
+	'WScript.echo strCmd
+	exitCode = sh.Run ( strCmd, 0, booAttached )
+
+	If (booAttached) Then
+		Dim tempFile
+		Set tempFile = oFso.OpenTextFile(WUFC_PSEXEC_TEMP_FILE, 1 ,false, 0)
+		stdOut.WriteLine( tempFile.ReadAll )
+		
+		If ( exitCode = 0 ) Then
+			stdOut.writeLine "Remote executed agent."
+		Else
+			If ( exitCode = 5 ) Then abort("Insufficient access, try running as admin.")
+			stdErr.writeLine("Unable to remote execute agent on:" & strComputer)
+		End If
+	Else
+		stdOut.writeLine "Psexec exit code: " & exitCode
+	End If
+	
+	'oFso.DeleteFile( WUFC_PSEXEC_TEMP_FILE )
+	
+End Function
+
+'*******************************************************************************
+Function translateAction()
+	translateAction = ""
+	If ( gBooActionAuto ) Then translateAction = translateAction & "/aA "
+	If ( gBooActionScan ) Then translateAction = translateAction & "/aS "
+	If ( gBooActionDownload ) Then translateAction = translateAction & "/aD "
+	If ( gBooActionInstall ) Then translateAction = translateAction & "/aI "
+	
 End Function
 
 '*******************************************************************************
@@ -230,31 +408,16 @@ End Function
 
 '*******************************************************************************
 Function printHelp()
+
 	stdOut.writeLine( WUFC_USAGE_HEAD )
 	stdOut.writeLine( "" )
 	stdOut.writeLine( WUFC_USAGE_ACTIONS )
 	stdOut.writeLine( WUFC_USAGE_OPTIONS )
+	
 End Function
 
 
 'Util
-'******************************************************************************
-Function attachedExec(strCommand)
-	Set oExec = WshShell.Exec( strCommand )
-	Do While ( oExec.Status = 0 )
-		WScript.Sleep( 100 )
-		consumeIo( oExec )
-		WScript.Sleep( 100 )
-	Loop
-End Function
-
-'******************************************************************************
-Function consumeIO(e)
-	Do While ( Not e.SrdOut.AtEndOfStream ) OR ( NOT e.StdErr.AtEndOfStream)
-		WScript.StdOut.WriteLine(">>" & e.StdOut.ReadLine )
-		WScript.StdErr.WriteLine(">>" & e.StdErr.ReadLine )
-	Loop
-End Function
 
 '*******************************************************************************
 Function strCompS(strA, strB) 'returns boolean
