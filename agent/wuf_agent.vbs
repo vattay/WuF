@@ -252,7 +252,8 @@ Function checkLock()
 	booLocked = Not gProcLock.tryLock()
 	If( booLocked ) Then
 		logDebug( "WUF is locked, lock is at: " & WUF_LOCK_LOCATION )
-		Err.Raise WUF_LOCK_ERROR, "checkLock", "WUF is locked, cannot run."
+		Err.Raise WUF_LOCK_ERROR, "checkLock", _
+			"WUF is locked, lock is at: " & WUF_LOCK_LOCATION
 	Else
 		logDebug( "Got lock" )
 	End If
@@ -515,13 +516,20 @@ Function wuDownloadWrapper(objSearchResult) 'returns nothing
 	Dim objFilteredUpdates
 	
 	Set objFilteredUpdates = gUpdateFilter.filter(objSearchResult.Updates)
+	
+	call gResOut.recordFilterResult(objSearchResult, objFilteredUpdates)
+	
+	If (objFilteredUpdates.count <= 0) Then
+		gResOut.recordInfo("No updates available after filter.")
+		Exit Function
+	End IF
 		
 	If (WUF_CATCH_ALL_EXCEPTIONS = 1) Then
 		On Error Resume Next
 			Set downloadResults = wuDownloadOp(objFilteredUpdates, WUF_ASYNC)
 		e.catch() 'catch
 		On Error GoTo 0
-		If (e.isException()) Then
+		If ( e.isException() ) Then
 			Dim Ex, strMsg
 			Set Ex = e.getException()
 			
@@ -557,9 +565,14 @@ Function wuInstallWrapper(objSearchResult)
 	
 	Set objFilteredUpdates = gUpdateFilter.filter(objSearchResult.Updates)
 	
-	gResOut.recordMissingDownloads(countMissingUpdates(objSearchResult)) 
+	gResOut.recordMissingDownloads(countUnstagedUpdates(objSearchResult)) 
 		
 	logInfo ( "Number of updates to be installed that are downloaded: " & objFilteredUpdates.count )
+	
+	If (objFilteredUpdates.count <= 0) Then
+		gResOut.recordInfo("No updates available after filter.")
+		Exit Function
+	End IF
 	
 	If (WUF_CATCH_ALL_EXCEPTIONS = 1) Then
 		On Error Resume Next
@@ -825,9 +838,9 @@ Function wuDownloadAsync(objUpdates)
 End Function
 
 '*******************************************************************************
-Function countMissingUpdates(objSearchResult)
+Function countUnstagedUpdates(objSearchResult)
 	
-	countMissingUpdates = 0
+	countUnstagedUpdates = 0
 
 	Dim i
 	For i = 0 To objSearchResult.Updates.Count-1
@@ -837,7 +850,7 @@ Function countMissingUpdates(objSearchResult)
 			logInfo("Update has been downloaded: " & update.Title )
 		Else
 			logWarn("Update is not downloaded: " & update.Title )
-			countMissingUpdates = countMissingUpdates + 1
+			countUnstagedUpdates = countUnstagedUpdates + 1
 	    End If
 	Next
 	
@@ -1634,6 +1647,10 @@ Class UpdateFilter
 		
 	End Function
 	
+	Function toString()
+		toString = "i=" & strInclude & ", e=" & strExclude
+	End Function
+	
 	Private Function isIncluded( objUpdate )
 		If ( strInclude = "") Then
 			isIncluded = TRUE
@@ -1906,15 +1923,15 @@ Class ResultWriter
 	End Function
 	
 	'---------------------------------------------------------------------------------
-	Function getUpdateListString( objSearchResult )
+	Function getUpdateListString( objUpdates )
 		
 		Dim searchList
 		searchList = ""
 		
 		Dim i
-		For i = 0 To ( objSearchResult.Updates.Count-1 )
+		For i = 0 To ( objUpdates.Count-1 )
 			Dim update, updateLine
-			Set update = objSearchResult.Updates.Item(i)
+			Set update = objUpdates.Item(i)
 			
 			updateLine = "{" 	& update.title & _
 				"|KB=" 			& getUpdateKB(update) & _
@@ -1941,7 +1958,28 @@ Class ResultWriter
 			getOperationResultMsg( objSearchResult.ResultCode) ) )
 		
 		call stream.writeLine( getPair("search.result.list",_
-			getUpdateListString(objSearchResult)) )
+			getUpdateListString(objSearchResult.Updates)) )
+	End Function
+	
+	'---------------------------------------------------------------------------------
+	Function recordFilterResult(objSearchResult, objFilteredUpdates)
+		Dim intSearchCount
+		Dim intFilterCount
+		
+		intSearchCount = objSearchResult.Updates.Count
+		intFilterCount = objFilteredUpdates.Count
+	
+		stream.writeLine( getPair( "filter.result.count", _
+			intFilterCount ) )
+			
+		If ( intSearchCount <> intFilterCount ) Then
+			call stream.writeLine( getPair("filter.result.list", _
+			getUpdateListString(objFilteredUpdates)) )
+		Else
+			call stream.writeLine( getPair("filter.result.ident", _
+			"" ) )
+		End If
+			
 	End Function
 	
 	'---------------------------------------------------------------------------------
