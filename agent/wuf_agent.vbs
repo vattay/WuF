@@ -473,7 +473,7 @@ End Function
 '*******************************************************************************
 Function doAction(intAction)
 
-	Dim searchResults
+	Dim objSearchResult
 
 	logInfo("Performing Action.")
 	
@@ -483,7 +483,7 @@ Function doAction(intAction)
 		logAutoUpdateSettings()
 		autoDetect()
 	ElseIf ((intAction and WUF_ACTION_SEARCH) <> 0) Then
-		Set searchResults = manualAction(intAction)
+		Set objSearchResult = manualAction(intAction)
 	End If
 	
 	logInfo("Action Complete.")
@@ -509,24 +509,18 @@ Function wuInstallOp(objUpdates, booAsync)
 End Function
 
 '*******************************************************************************
-Function wuDownloadWrapper(objSearchResult) 'returns nothing
+Function wuDownloadWrapper(objUpdates) 'returns nothing
 
 	Dim downloadResults
 	
-	Dim objFilteredUpdates
-	
-	Set objFilteredUpdates = gUpdateFilter.filter(objSearchResult.Updates)
-	
-	call gResOut.recordFilterResult(objSearchResult, objFilteredUpdates)
-	
-	If (objFilteredUpdates.count <= 0) Then
-		gResOut.recordInfo("No updates available after filter.")
+	If (objUpdates.count <= 0) Then
+		gResOut.recordInfo("No updates to download.")
 		Exit Function
 	End IF
 		
 	If (WUF_CATCH_ALL_EXCEPTIONS = 1) Then
 		On Error Resume Next
-			Set downloadResults = wuDownloadOp(objFilteredUpdates, WUF_ASYNC)
+			Set downloadResults = wuDownloadOp(objUpdates, WUF_ASYNC)
 		e.catch() 'catch
 		On Error GoTo 0
 		If ( e.isException() ) Then
@@ -548,35 +542,27 @@ Function wuDownloadWrapper(objSearchResult) 'returns nothing
 			
 		End If
 	Else
-		Set downloadResults = wuDownloadOp(objFilteredUpdates, WUF_ASYNC)
+		Set downloadResults = wuDownloadOp(objUpdates, WUF_ASYNC)
 	End If
 		
-	call logDownloadResult(objFilteredUpdates, downloadResults)
-	call gResOut.recordDownloadResult(objFilteredUpdates, downloadResults)
+	call logDownloadResult(objUpdates, downloadResults)
+	call gResOut.recordDownloadResult(objUpdates, downloadResults)
 	
 End Function
 
 '*******************************************************************************
-Function wuInstallWrapper(objSearchResult)
+Function wuInstallWrapper(objUpdates)
 
 	Dim installResult
 	
-	Dim objFilteredUpdates
-	
-	Set objFilteredUpdates = gUpdateFilter.filter(objSearchResult.Updates)
-	
-	gResOut.recordMissingDownloads(countUnstagedUpdates(objSearchResult)) 
-		
-	logInfo ( "Number of updates to be installed that are downloaded: " & objFilteredUpdates.count )
-	
-	If (objFilteredUpdates.count <= 0) Then
-		gResOut.recordInfo("No updates available after filter.")
+	If (objUpdates.count <= 0) Then
+		gResOut.recordInfo("No updates to install.")
 		Exit Function
 	End IF
 	
 	If (WUF_CATCH_ALL_EXCEPTIONS = 1) Then
 		On Error Resume Next
-			Set installResult = wuInstallOp(objFilteredUpdates, WUF_ASYNC)
+			Set installResult = wuInstallOp(objUpdates, WUF_ASYNC)
 		e.catch() 'catch
 		On Error GoTo 0
 		If (e.isException()) Then
@@ -597,53 +583,63 @@ Function wuInstallWrapper(objSearchResult)
 			Err.Raise newEx.number, newEx.Source, newEx.Description
 		End If		
 	Else
-		Set installResult = wuInstallOp(objFilteredUpdates, WUF_ASYNC)
+		Set installResult = wuInstallOp(objUpdates, WUF_ASYNC)
 	End If
 
-	call logInstallationResult(objFilteredUpdates,installResult)
-	call gResOut.recordInstallationResult(objFilteredUpdates, installResult )
+	call logInstallationResult(objUpdates,installResult)
+	call gResOut.recordInstallationResult(objUpdates, installResult )
 	
 End Function
 
 '*******************************************************************************
 Function manualAction(intAction)
-	Dim searchResults
+	Dim objSearchResult
 	Dim intUpdateCount
+	Dim objFilteredUpdates
 	
 	logDebug("Starting Manual Action.")
 	
 	intUpdateCount = 0
 	
-	Set searchResults = wuSearch( gSearchCriteria )
-	intUpdateCount = searchResults.Updates.Count
+	Set objSearchResult = wuSearch( gSearchCriteria )
+	intUpdateCount = objSearchResult.Updates.Count
 	
-	logSearchResult( searchResults )
-	gResOut.recordSearchResult( searchResults )
+	logSearchResult( objSearchResult )
+	gResOut.recordSearchResult( objSearchResult )
 		
 	Dim rs
-	Set rs = new ResultSummary.init(searchResults)
+	Set rs = new ResultSummary.init( objSearchResult )
 	
 	gResOut.recordInfo("Pre-op=" & rs.generateSummary())
 
 	If (intUpdateCount > 0) Then
+	
+		Set objFilteredUpdates = gUpdateFilter.filter(objSearchResult.updates)
+		
+		If ( objFilteredUpdates.Count <> intUpdateCount ) Then
+			call gResOut.recordFilterResult(objFilteredUpdates)
+		Else
+			call gResOut.recordInfo("Filter did not affect search results")
+		End If
+	
 		If ( (intAction and WUF_ACTION_DOWNLOAD) <> 0 ) Then
-			wuDownloadWrapper(searchResults)
-			gResOut.recordInfo("Post-op=" & rs.generateSummary())
+			wuDownloadWrapper(objFilteredUpdates)
 		End If
 		
 		If ( (intAction and  WUF_ACTION_INSTALL) <> 0 ) Then
-			acceptEulas(searchResults)
-			wuInstallWrapper(searchResults)
-			gResOut.recordInfo("Post-op=" & rs.generateSummary())
+			gResOut.recordMissingDownloads(countUnstagedUpdates(objSearchResult)) 
+			acceptEulas(objSearchResult)
+			wuInstallWrapper(objFilteredUpdates)
 		End If
 	Else
 		gResOut.recordInfo("No updates returned by search.")
 	End If
 	
+	Set objSearchResult = wuSearch( gSearchCriteria )
+	Set rs = new ResultSummary.init(objSearchResult)
+	gResOut.recordInfo("Post-op=" & rs.generateSummary())
+	
 	If ( gBooUsePill ) Then
-		Set searchResults = wuSearch( gSearchCriteria )
-		Set rs = new ResultSummary.init(searchResults)
-		gResOut.recordInfo("post-check=" & rs.generateSummary())
 		Dim resultPill
 		Set resultPill = New ResultPill.initS(rs,gPillDir)
 		resultPill.write( getComputerName() )
@@ -651,7 +647,7 @@ Function manualAction(intAction)
 	
 	logDebug("Manual Action completed.")
 	
-	Set manualAction = searchResults
+	Set manualAction = objSearchResult
 	
 End Function
 
@@ -688,7 +684,7 @@ Function cleanup()
 End Function
 
 '**************************************************************************************
-Function wuSearch(strFilter) 'return ISearchResult
+Function wuSearch(strCriteria) 'return ISearchResult
 	Dim searchResult
 	Dim updateSearcher 
 	
@@ -701,7 +697,7 @@ Function wuSearch(strFilter) 'return ISearchResult
 	logInfo("Starting Update Search.")
 	
 	On Error Resume Next
-		Set searchResult = updateSearcher.Search(strFilter)
+		Set searchResult = updateSearcher.Search(strCriteria)
 	e.catch() 'catch
 	On Error GoTo 0
 	If ( e.isException() ) Then
@@ -1150,6 +1146,9 @@ Function shutDownActionDelay(intAction, intDelay)
 	Dim strShutDown
 	Dim strSysRt
 	Dim objShell
+	Dim exitCode
+	
+	logDebug( "Running delayed shutdown command with t=" & intDelay)
 	
 	Set objShell = CreateObject("WScript.Shell")
 	
@@ -1157,17 +1156,17 @@ Function shutDownActionDelay(intAction, intDelay)
 	
 	If (intAction = WUF_SHUTDOWN_RESTART) Then
 		strShutdown = strSysRt & "\system32\cmd.exe /c " & strSysRt & _
-			"system32\shutdown.exe /r /t " & intDelay & " /f"
+			"\system32\shutdown.exe /r /t " & intDelay & " /f"
 	ElseIf	(intAction = WUF_SHUTDOWN_SHUTDOWN) Then
 		strShutdown = strSysRt & "\system32\cmd.exe /c " & strSysRt & _
-			"system32\shutdown.exe /s /t " & intDelay & " /f"
+			"\system32\shutdown.exe /s /t " & intDelay & " /f"
 	Else 
 		Exit Function
 	End If
 	
 	On Error Resume Next
-	objShell.Run strShutdown, 0, FALSE
-		e.catch() 'catch
+		exitCode = objShell.Run(strShutdown, 0, FALSE)
+	e.catch() 'catch
 	On Error GoTo 0
 	If (e.isException()) Then
 		Dim Ex, strMsg
@@ -1179,6 +1178,8 @@ Function shutDownActionDelay(intAction, intDelay)
 		call logErrorEx("Shutdown action problem", newEx)
 		gResOut.recordError( strMsg )
 	End If
+	
+	logInfo "Shutdown command exited with code: " & exitCode
 End Function
 
 '*******************************************************************************
@@ -1796,7 +1797,7 @@ Class ResultSummary
 	'---------------------------------------------------------------------------------
 	Function generateSummary() 'returns String
 		
-		generateSummary = "Searched=" & getUpdatesSearched() & _
+		generateSummary = "Available=" & getUpdatesSearched() & _
 			", Downloaded=" & getDownloadedCount() & _
 			", Installed=" & getInstalledCount()
 	End Function
@@ -1805,7 +1806,7 @@ Class ResultSummary
 	Function generatePillName( strPrefix ) 'IUpdateSearchResult -> String
 		
 		generatePillName = strPrefix & _
-			"_s" & getUpdatesSearched() & _
+			"_a" & getUpdatesSearched() & _
 			"_d" & getDownloadedCount() & _
 			"_i" & getInstalledCount() & ".pil"
 	End Function
@@ -1962,24 +1963,18 @@ Class ResultWriter
 	End Function
 	
 	'---------------------------------------------------------------------------------
-	Function recordFilterResult(objSearchResult, objFilteredUpdates)
-		Dim intSearchCount
+	Function recordFilterResult( objFilteredUpdates )
+	
 		Dim intFilterCount
 		
-		intSearchCount = objSearchResult.Updates.Count
 		intFilterCount = objFilteredUpdates.Count
 	
 		stream.writeLine( getPair( "filter.result.count", _
 			intFilterCount ) )
 			
-		If ( intSearchCount <> intFilterCount ) Then
-			call stream.writeLine( getPair("filter.result.list", _
+		call stream.writeLine( getPair("filter.result.list", _
 			getUpdateListString(objFilteredUpdates)) )
-		Else
-			call stream.writeLine( getPair("filter.result.ident", _
-			"" ) )
-		End If
-			
+
 	End Function
 	
 	'---------------------------------------------------------------------------------
