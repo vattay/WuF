@@ -289,6 +289,8 @@ Function parseArgs()
 				If Not ( parseAction(arg) ) Then
 					Err.Raise WUF_INPUT_ERROR, "parseArgs()", "Invalid action " & arg
 				End If
+			ElseIf ( strCompS(arg,"sF") ) Then
+				gForceShutdown = True
 			ElseIf ( headStr(arg,"s") ) Then 
 				If (booShutdownFlag) Then 
 					Err.Raise WUF_INPUT_ERROR, "parseArgs()", "More than one shutdown option."
@@ -375,8 +377,6 @@ Function parseShutdownOption(strArgVal) 'return boolean
 		gShutdownOption = WUF_SHUTDOWN_RESTART
 	ElseIf (strCompS(strArgVal, "sH")) Then
 		gShutdownOption = WUF_SHUTDOWN_SHUTDOWN
-	ElseIf (strCompS(strArgVal, "sF")) Then
-		gForceShutdown = TRUE
 	Else
 		gShutdownOption = WUF_SHUTDOWN_UNDEFINED
 		parseShutdownOption = False
@@ -654,11 +654,11 @@ End Function
 '*******************************************************************************
 Function postAction()
 	logInfo("Performing post-actions")
-	If (rebootPlanned()) Then
+	If (shutdownActionPlanned()) Then
 		logInfo("System shutdown action will occur.")
 		call shutDownActionDelay(gShutdownOption, WUF_DEFAULT_SHUTDOWN_DELAY)
 	End If
-	gResOut.recordShutdownPlan(rebootPlanned())
+	gResOut.recordShutdownPlan(shutdownActionPlanned())
 	gResOut.recordComplete()
 	logInfo("Completed post-actions")
 End Function
@@ -1585,10 +1585,9 @@ Function setGlobalRunId()
 End Function
 
 '*******************************************************************************
-Function rebootPlanned()
-	rebootPlanned = ( (isShutdownActionPending() _
-		AND ( gShutdownOption >= WUF_SHUTDOWN_RESTART )) _
-		OR ( gForceShutdown ) )
+Function shutdownActionPlanned()
+	shutdownActionPlanned = ( ( isShutdownActionPending() OR  gForceShutdown ) _
+		AND ( gShutdownOption >= WUF_SHUTDOWN_RESTART ) )
 End Function
 
 '*******************************************************************************
@@ -2068,7 +2067,7 @@ Class ResultWriter
 	
 	'---------------------------------------------------------------------------------
 	Function recordShutdownPlan(booIsShutdownPlanned)
-		stream.writeLine(getPair("post.rebootPlanned", booIsShutdownPlanned))
+		stream.writeLine(getPair("post.shutdownActionPlanned", booIsShutdownPlanned))
 	End Function
 	
 	'---------------------------------------------------------------------------------
