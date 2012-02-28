@@ -612,7 +612,7 @@ Function manualAction(intAction)
 	
 	gResOut.recordInfo("Pre-op=" & rs.generateSummary())
 
-	'If (intUpdateCount > 0) Then
+	If (intUpdateCount > 0) Then
 		If ( (intAction and WUF_ACTION_DOWNLOAD) <> 0 ) Then
 			wuDownloadWrapper(searchResults)
 			gResOut.recordInfo("Post-op=" & rs.generateSummary())
@@ -623,7 +623,9 @@ Function manualAction(intAction)
 			wuInstallWrapper(searchResults)
 			gResOut.recordInfo("Post-op=" & rs.generateSummary())
 		End If
-	'End If
+	Else
+		gResOut.recordInfo("No updates returned by search.")
+	End If
 	
 	If ( gBooUsePill ) Then
 		Set searchResults = wuSearch( gSearchCriteria )
