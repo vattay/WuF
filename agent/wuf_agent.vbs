@@ -132,13 +132,11 @@ Function main()
 			core()
 		e.catch() 'catch
 		On Error GoTo 0
-		If (e.isException()) Then
+		If ( e.isException() ) Then
 			Dim Ex
 			Set Ex = e.getException()
-			Dim strMsg
-			If Ex.number = cLng("&H80240044") Then
-				strMsg = "Insufficient access, try running as administrator." 
-				gResOut.recordError( strMsg )
+			If Ex.number = cLng("&H80240044") Then 
+				gResOut.recordError( "Insufficient access, try running as administrator."  )
 			ElseIf (Ex.number = WUF_INPUT_ERROR) Then
 				gResOut.recordError( "(Improper input) " & Ex.Description )
 				gResOut.recordInfo( WUF_USAGE )
@@ -171,7 +169,27 @@ Function main()
 		core()
 	End If
 	
-	cleanup()
+	If (WUF_CATCH_ALL_EXCEPTIONS = 1) Then
+		On Error Resume Next
+			cleanup()
+		e.catch() 'catch
+		On Error GoTo 0
+		If ( e.isException() ) Then
+			Set Ex = e.getException()
+			If  (Ex.number = WUF_STREAM_ERROR ) Then
+				gResOut.recordError( "(Cleanup: Stream Access) " & Ex.Description )
+				logError( e.dump(Ex) )
+			ElseIf  (Ex.number = WUF_LOCK_ERROR ) Then
+				gResOut.recordError( "(Cleanup: Process Lock) " & Ex.Description )
+				logError( e.dump(Ex) )
+			Else
+				gResOut.recordError( "(Cleanup: Unhandled exception) " & Ex.Description )
+				logError( e.dump(Ex) )
+			End If
+		End If
+	Else
+		cleanup()
+	End If
 	WScript.quit
 End Function
 
@@ -610,42 +628,42 @@ Function manualAction(intAction)
 	Dim rs
 	Set rs = new ResultSummary.init( objSearchResult )
 	
-	gResOut.recordInfo("Pre-op=" & rs.generateSummary())
+	gResOut.recordInfo( "Pre-op=" & rs.generateSummary() )
 
-	If (intUpdateCount > 0) Then
+	If ( intUpdateCount > 0 ) Then
 	
-		Set objFilteredUpdates = gUpdateFilter.filter(objSearchResult.updates)
+		Set objFilteredUpdates = gUpdateFilter.filter( objSearchResult.updates )
 		
 		If ( objFilteredUpdates.Count <> intUpdateCount ) Then
-			call gResOut.recordFilterResult(objFilteredUpdates)
+			call gResOut.recordFilterResult( objFilteredUpdates )
 		Else
-			call gResOut.recordInfo("Filter did not affect search results")
+			call gResOut.recordInfo( "Filter did not affect search results" )
 		End If
 	
-		If ( (intAction and WUF_ACTION_DOWNLOAD) <> 0 ) Then
-			wuDownloadWrapper(objFilteredUpdates)
+		If ( ( intAction and WUF_ACTION_DOWNLOAD ) <> 0 ) Then
+			wuDownloadWrapper( objFilteredUpdates )
 		End If
 		
-		If ( (intAction and  WUF_ACTION_INSTALL) <> 0 ) Then
-			gResOut.recordMissingDownloads(countUnstagedUpdates(objSearchResult)) 
-			acceptEulas(objSearchResult)
-			wuInstallWrapper(objFilteredUpdates)
+		If ( ( intAction and  WUF_ACTION_INSTALL ) <> 0 ) Then
+			gResOut.recordMissingDownloads( countUnstagedUpdates( objSearchResult ) ) 
+			acceptEulas( objSearchResult )
+			wuInstallWrapper( objFilteredUpdates )
 		End If
 	Else
 		gResOut.recordInfo("No updates returned by search.")
 	End If
 	
 	Set objSearchResult = wuSearch( gSearchCriteria )
-	Set rs = new ResultSummary.init(objSearchResult)
-	gResOut.recordInfo("Post-op=" & rs.generateSummary())
+	Set rs = new ResultSummary.init( objSearchResult )
+	gResOut.recordInfo( "Post-op=" & rs.generateSummary() )
 	
 	If ( gBooUsePill ) Then
 		Dim resultPill
-		Set resultPill = New ResultPill.initS(rs,gPillDir)
+		Set resultPill = New ResultPill.initS( rs, gPillDir )
 		resultPill.write( getComputerName() )
 	End If
 	
-	logDebug("Manual Action completed.")
+	logDebug( "Manual Action completed." )
 	
 	Set manualAction = objSearchResult
 	
@@ -653,14 +671,16 @@ End Function
 
 '*******************************************************************************
 Function postAction()
-	logInfo("Performing post-actions")
-	If (shutdownActionPlanned()) Then
-		logInfo("System shutdown action will occur.")
-		call shutDownActionDelay(gShutdownOption, WUF_DEFAULT_SHUTDOWN_DELAY)
+
+	logInfo( "Performing post-actions" )
+	If ( shutdownActionPlanned() ) Then
+		logInfo( "System shutdown action will occur." )
+		call shutDownActionDelay( gShutdownOption, WUF_DEFAULT_SHUTDOWN_DELAY )
 	End If
-	gResOut.recordShutdownPlan(shutdownActionPlanned())
+	gResOut.recordShutdownPlan( shutdownActionPlanned() )
 	gResOut.recordComplete()
-	logInfo("Completed post-actions")
+	logInfo( "Completed post-actions" )
+	
 End Function
 
 '*******************************************************************************
@@ -677,6 +697,7 @@ Function cleanup()
 	Set gResOut = nothing
 	
 	logInfo("WUF finished.")
+	
 	gFileLog.close
 	
 	Set stdOut = nothing
@@ -2336,9 +2357,9 @@ Class ReEntrantProcessLock
 			isHeld = isHeldByCurrentProc()
 		e.catch()
 		On Error GoTo 0
-		If (e.isException()) Then
-			Dim Ex
-			Set Ex = e.getException()
+		If ( e.isException() ) Then
+			Dim Exf
+			Set Exf = e.getException()
 			Exit Function
 		End If
 		
@@ -2346,7 +2367,22 @@ Class ReEntrantProcessLock
 			If ( isObject( objLockFile ) ) Then
 				objLockFile.close()
 			End If	
+			On Error Resume Next
 				fso.DeleteFile( strLockFileLocation )
+					e.catch()
+			On Error GoTo 0
+			If ( e.isException() ) Then
+				Dim Ex
+				Set Ex = e.getException()
+				
+				Dim strMsg
+				strMsg = "Could not delete lock file."
+				
+				Dim newEx
+				Set newEx = e.preRaise( New ErrWrap.initExM( WUF_LOCK_ERROR, _
+				"ReEntrantLockProcessLock.unlock()", strMsg , Ex) )
+				Err.Raise newEx.number, newEx.Source, newEx.Description
+			End If
 		End If
 		
 	End Function
