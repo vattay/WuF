@@ -120,6 +120,9 @@ main()
 '*******************************************************************************
 Function main()
 
+	Dim exitCode
+	exitCode = 0
+
 	If Not(isCscript()) Then
 		WScript.echo  "Unsupported script host, this program must be run with cscript." 
 		WScript.quit
@@ -135,6 +138,7 @@ Function main()
 		If ( e.isException() ) Then
 			Dim Ex
 			Set Ex = e.getException()
+			exitCode = Ex.Number
 			If Ex.number = cLng("&H80240044") Then 
 				gResOut.recordError( "Insufficient access, try running as administrator."  )
 			ElseIf (Ex.number = WUF_INPUT_ERROR) Then
@@ -176,6 +180,7 @@ Function main()
 		On Error GoTo 0
 		If ( e.isException() ) Then
 			Set Ex = e.getException()
+			exitCode = Ex.Number
 			If  (Ex.number = WUF_STREAM_ERROR ) Then
 				gResOut.recordError( "(Cleanup: Stream Access) " & Ex.Description )
 				logError( e.dump(Ex) )
@@ -190,7 +195,9 @@ Function main()
 	Else
 		cleanup()
 	End If
-	WScript.quit
+	
+	WScript.quit exitCode
+	
 End Function
 
 '*******************************************************************************
