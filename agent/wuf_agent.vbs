@@ -62,6 +62,7 @@ Const WUF_VERIFY_ERROR = 			10009
 Const WUF_STREAM_ERROR = 			10010
 Const WUF_COMMAND_ERROR = 			10011
 Const WUF_LOCK_ERROR = 				10012
+Const WUF_ACCESS_ERROR = 			10013
 
 Const WUF_ACTION_UNDEFINED = 0
 Const WUF_ACTION_AUTO = 	1
@@ -455,6 +456,7 @@ End Function
 '*******************************************************************************
 Function verify() 'return boolean
 	Dim verified
+	Dim booIsShutdownActionPending
 	
 	logInfo( "---Verifying Configuration...---" )
 	verified = True
@@ -466,7 +468,11 @@ Function verify() 'return boolean
 		verified = False
 	End If
 	
-	If (isShutdownActionPending()) Then
+	booIsShutdownActionPending = isShutdownActionPending()
+	
+	gResOut.recordPendingShutdown( booIsShutdownActionPending )
+	
+	If ( booIsShutdownActionPending ) Then
 		logInfo("[?] There is a pending restart required.")
 		If ((gAction and WUF_ACTION_INSTALL) = 1) Then
 			logWarn("[-] Install requested with pending restart.")
@@ -491,7 +497,6 @@ Function preAction()
 	logInfo("Performing Pre-Action.")
 	logEnvironment()
 	logLocalWuSettings()
-	gResOut.recordPendingShutdown(isShutdownActionPending())
 	logInfo("Pre-Action Complete.")
 End Function
 
@@ -679,12 +684,16 @@ End Function
 '*******************************************************************************
 Function postAction()
 
+	Dim booShutdownActionPlanned
+	
 	logInfo( "Performing post-actions" )
-	If ( shutdownActionPlanned() ) Then
+	
+	booShutdownActionPlanned = shutdownActionPlanned()
+	If ( booShutdownActionPlanned ) Then
 		logInfo( "System shutdown action will occur." )
 		call shutDownActionDelay( gShutdownOption, WUF_DEFAULT_SHUTDOWN_DELAY )
 	End If
-	gResOut.recordShutdownPlan( shutdownActionPlanned() )
+	gResOut.recordShutdownPlan( booShutdownActionPlanned )
 	gResOut.recordComplete()
 	logInfo( "Completed post-actions" )
 	
@@ -1213,7 +1222,26 @@ End Function
 '*******************************************************************************
 Function isShutdownActionPending() 'return boolean
 	Dim computerStatus
-	Set computerStatus = CreateObject("Microsoft.Update.SystemInfo") 
+	On Error Resume Next
+		Set computerStatus = CreateObject("Microsoft.Update.SystemInfo") 
+	e.catch() 'catch
+	On Error GoTo 0
+	If (e.isException()) Then
+		Dim Ex, strMsg
+		Set Ex = e.getException()
+			strMsg = "Unable to get pending restart status, assuming needs restart."
+		Dim newEx
+		Set newEx = New ErrWrap.initExM( WUF_ACCESS_ERROR, _
+			"isShutdownActionPending()", strMsg, Ex ) 
+		call logWarnEx( "Shutdown Pending State Unknown, assuming true.", newEx )
+		call logDebug( "This annoying error occurs when the account running " & _
+			"the WuF agent doesn't have access to create the Microsoft.Update.SystemInfo " & _
+			"object. It can sometimes be remedied by manually configuring windows update " & _
+			"settings on the remote computer logged in to the problematic account. " )
+		gResOut.recordWarn( strMsg )
+		isShutdownActionPending = True
+		Exit Function
+	End If
 	isShutdownActionPending = computerStatus.RebootRequired
 End Function
 
@@ -2106,6 +2134,11 @@ Class ResultWriter
 	'---------------------------------------------------------------------------------
 	Function recordError( strMessage )
 		stream.writeLine( "#error:" & strMessage )
+	End Function
+	
+	'---------------------------------------------------------------------------------
+	Function recordWarn( strMessage )
+		stream.writeLine( "#warn:" & strMessage )
 	End Function
 	
 	'---------------------------------------------------------------------------------
