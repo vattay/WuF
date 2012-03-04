@@ -28,7 +28,7 @@ Const WUFC_INPUT_ERROR = 10010
 Const WUFC_USAGE_HEAD = "Usage: wuf.vbs [options] [/box:dropbox] /group:<groupfile> {actions}"
 
 Const WUFC_USAGE_ACTIONS = "Actions: ( AUTO | SCAN | DOWNLOAD | INSTALL )"
-Const WUFC_USAGE_OPTIONS = "Options: ( /r | /a )"
+Const WUFC_USAGE_OPTIONS = "Options: ( /r | /a | /i )"
 
 'GLOBAL ---
 Dim stdErr, stdOut, stdIn	'std stream access
@@ -43,6 +43,7 @@ Dim gStrGroupFileLocation
 
 Dim gBooRestart
 Dim gBooAttached 
+Dim gBooInteractive
 
 Dim gBooActionAuto
 Dim gBooActionScan
@@ -84,6 +85,7 @@ Function init()
 	
 	gBooRestart = FALSE
 	
+	gBooInteractive = FALSE
 	gBooActionAuto = FALSE
 	gBooActionScan = FALSE
 	gBooActionDownload = FALSE
@@ -149,7 +151,7 @@ Function parseArgs()
 			If ( strCompS(arg,"group") Or strCompS(arg,"g") ) Then
 				gStrGroupFileLocation = Wscript.Arguments.Named( arg )
 				booGroupGiven = TRUE
-			ElseIf ( strCompS(arg,"box") ) Then
+			ElseIf ( strCompS(arg,"box") Or strCompS(arg,"b")) Then
 				gDropBoxRootLocation = Wscript.Arguments.Named( arg )
 			ElseIf ( strCompS(arg,"user") ) Then
 				gUsername = Wscript.Arguments.Named( arg )
@@ -167,6 +169,8 @@ Function parseArgs()
 			ElseIf ( strCompS(arg,"install") ) Then
 				booActionGiven = TRUE
 				gBooActionInstall = TRUE
+			ElseIf ( strCompS(arg,"i") ) Then
+				gBooInteractive = TRUE
 			ElseIf ( strCompS(arg,"r") ) Then
 				gBooRestart = TRUE
 			ElseIf ( strCompS(arg,"a") ) Then
@@ -289,10 +293,10 @@ Function mapAgent(arrComputers)
 	For Each strComputer In arrComputers
 		If ( strComputer <> "" ) Then
 			stdOut.writeline strComputer & " (" & i & "/" & intServerCount & ")"
-			createStub(strComputer)
-			Dim deployCode
-			deployCode = deployAgent(strComputer, strRemoteAgentName)
-			If ( deployCode = 0 ) Then
+			Dim booDeployed
+			booDeployed = deployAgent(strComputer, strRemoteAgentName)
+			call createStub(strComputer, booDeployed)
+			If ( booDeployed ) Then
 				call executeAgent(strComputer, gBooAttached, gBooRestart, true, strRemoteAgentName)
 				'call deleteAgent(strComputer, strRemoteAgentName)
 			Else
@@ -305,57 +309,92 @@ Function mapAgent(arrComputers)
 End Function
 
 '*******************************************************************************
-Function createStub(strComputer)
+Function createStub(strComputer, booSuccess)
 
 	Dim exitCode
 	Dim strCmd
+	Dim strPostFix
+	
+	If ( booSuccess ) Then
+		strPostFix = WUFC_DEFAULT_RESULT_POSTFIX
+	Else
+		strPostFix = ".fail"
+	End If
 	
 	strCmd = "cmd /c echo. 2>" & gDropBoxLocation &_
-		"\" & strComputer & WUFC_DEFAULT_RESULT_POSTFIX
+		"\" & strComputer & strPostFix
+		
 	exitCode = sh.Run( strCmd, 0, true )
 	
 End Function
 
 '*******************************************************************************
-Function deployAgent(strComputer, strRemoteAgentName)
+Function deployAgent(strComputer, strRemoteAgentName) 'return bool
 	
 	Dim exitCode
 	Dim strCmdCopy, strCmdUse
 	Dim strUserArg
 	
-	stdOut.writeLine( "Copying agent to: " & strComputer )
+	deployAgent = True
+	
+	stdOut.writeLine( "Deploying agent to: " & strComputer )
+	
+	strCmdCopy = "cmd /c copy /V " & WUFC_MASTER_AGENT_LOCATION &_
+		" \\" & strComputer & "\ADMIN$\temp\" & strRemoteAgentName
+	
+	stdOut.writeLine( "Attempting copy." )
+	exitCode = sh.Run( strCmdCopy, 1, true )
+	
+	If ( exitCode = 0 ) Then
+		stdOut.writeLine "Copy successful"
+		Exit Function
+	ElseIf ( gBooInteractive ) Then
+		stdErr.writeLine "Copy exit code: " & exitCode
+		stdErr.writeLine "Initial copy failed, attemping to use network share."
+	Else
+		stdErr.writeLine "Copy exit code: " & exitCode
+		stdErr.writeLine "Copy Failed."	
+		deployAgent	= False	
+		Exit Function
+	End If
 	
 	If ( gUsername <> "" ) Then
 		strUserArg = "/USER:" & gUsername
 	End If
 	
-	WScript.echo strCmdUse
+	'WScript.echo strCmdUse
 	
-	strCmdUse = "net use \\" & strComputer & "\ADMIN$\temp " & _
+	strCmdUse = "net use \\" & strComputer & "\ADMIN$ " & _
 		gPassword & _
 		" " & strUserArg
 	exitCode = sh.Run( strCmdUse, 1, True )
 	
-	WScript.echo "NET USE exit code: " & exitCode
+	If ( exitCode <> 0 ) Then
+		stdErr.writeLine( "NET USE Failed, trying copy anyway..." )
+	End If
 	
-	strCmdCopy = "cmd /c copy /V " & WUFC_MASTER_AGENT_LOCATION &_
-		" \\" & strComputer & "\ADMIN$\temp\" & strRemoteAgentName 
+	stdOut.writeLine "NET USE exit code: " & exitCode
+	
 	exitCode = sh.Run( strCmdCopy, 1, true )
 	
-	WScript.echo "Copy exit code: " & exitCode
+	stdOut.writeLine "Copy exit code: " & exitCode
 	
 	If ( exitCode <> 0 ) Then 
 		stdErr.writeLine( "Copy failed to: " & strComputer )
+		deployAgent = False
 		call sh.Run( "cmd /c echo " & strComputer & " >> dead.txt", 0, True )
 	End If
 	
-	strCmdUse = "net use \\" & strComputer & "\ADMIN$\temp " & _
+	strCmdUse = "net use \\" & strComputer & "\ADMIN$ " & _
 		" /DELETE"
 	exitCode = sh.Run( strCmdUse, 1, True )
 	
-	WScript.echo "Net Use Delete exit code: " & exitCode
+	stdOut.writeLine "Net Use Delete exit code: " & exitCode
 	
-	deployAgent = exitCode
+	If ( exitCode <> 0 ) Then
+		stdErr.writeLine( "NET USE DELETE Failed, residual shares may still be in use." )
+	End If
+	
 End Function
 
 '*******************************************************************************
@@ -367,13 +406,16 @@ Function executeAgent(strComputer, booAttached, booRestart, booSystem, strRemote
 	Dim strArgRestart
 	Dim strTempFileRedirect
 	DIm strSysArg
+	Dim strArgCmdCloseArg
 
 	strTempFileRedirect = ""
 	strArgAttached = "-d"
+	strArgCmdCloseArg = "/k"
 	
 	If ( booAttached ) Then 
 		strArgAttached = ""
 		strTempFileRedirect = " 2>&1>" & WUFC_PSEXEC_TEMP_FILE
+		strArgCmdCloseArg = "/c"
 	End If
 	
 	If ( booSystem ) Then strSysArg = "-s" Else strSysArg = ""
@@ -382,7 +424,7 @@ Function executeAgent(strComputer, booAttached, booRestart, booSystem, strRemote
 
 	stdOut.writeLine( "Remote executing wuf agent on: " & strComputer )
 	
-	strCmd = "cmd /k psexec.exe -accepteula" & strArgAttached & " " & strSysArg  & _
+	strCmd = "cmd " & strArgCmdCloseArg & " psexec.exe -accepteula " & strArgAttached & " " & strSysArg  & _
 		" \\" & strComputer & _
 		" -w C:\Windows\Temp c:\windows\system32\cscript.exe //I //NoLogo c:\windows\temp\" & _
 		strRemoteAgentName & " " & translateAction() & _
