@@ -49,6 +49,9 @@ Dim gBooActionScan
 Dim gBooActionDownload
 Dim gBooActionInstall
 
+Dim gPassword
+Dim gUsername
+
 ' main injection point
 main()
 
@@ -143,11 +146,15 @@ Function parseArgs()
 	If (objArgs.Count > 0) Then
 		Dim i
 		For Each arg in objNamedArgs
-			If ( strCompS(arg,"group") ) Then
+			If ( strCompS(arg,"group") Or strCompS(arg,"g") ) Then
 				gStrGroupFileLocation = Wscript.Arguments.Named( arg )
 				booGroupGiven = TRUE
 			ElseIf ( strCompS(arg,"box") ) Then
 				gDropBoxRootLocation = Wscript.Arguments.Named( arg )
+			ElseIf ( strCompS(arg,"user") ) Then
+				gUsername = Wscript.Arguments.Named( arg )
+			ElseIf ( strCompS(arg,"password") ) Then
+				gPassword = Wscript.Arguments.Named( arg )
 			ElseIf ( strCompS(arg,"auto") ) Then
 				booActionGiven = TRUE
 				gBooActionAuto = TRUE
@@ -164,7 +171,7 @@ Function parseArgs()
 				gBooRestart = TRUE
 			ElseIf ( strCompS(arg,"a") ) Then
 				gBooAttached = TRUE
-			ElseIf ( strCompS(arg,"h") ) Then
+			ElseIf ( strCompS(arg,"h") Or strCompS(arg,"?") ) Then
 				printHelp()
 				abort("Over and Out.")
 			Else
@@ -233,7 +240,7 @@ Function checkSystem()
 	Dim code
 	code = sh.Run("psexec.exe -s echo.", 0, true)
 	If ( code = 9009 ) 	Then abort("Psexec not available.")
-	If ( code = 5 )		Then abort("Insufficient permissions, try running as admin.")
+	'If ( code = 5 )		Then abort("Insufficient permissions, try running as admin.")
 End Function
 
 '*******************************************************************************
@@ -286,7 +293,10 @@ Function mapAgent(arrComputers)
 			Dim deployCode
 			deployCode = deployAgent(strComputer, strRemoteAgentName)
 			If ( deployCode = 0 ) Then
-				call executeAgent(strComputer, gBooAttached, gBooRestart, strRemoteAgentName)
+				call executeAgent(strComputer, gBooAttached, gBooRestart, true, strRemoteAgentName)
+				'call deleteAgent(strComputer, strRemoteAgentName)
+			Else
+				stdErr.writeLine ( "Could not copy agent to remote host: " & strComputer )
 			End If
 			i = i + 1
 		End If
@@ -310,30 +320,53 @@ End Function
 Function deployAgent(strComputer, strRemoteAgentName)
 	
 	Dim exitCode
-	Dim strCmd
+	Dim strCmdCopy, strCmdUse
+	Dim strUserArg
 	
 	stdOut.writeLine( "Copying agent to: " & strComputer )
 	
-	strCmd = "cmd /c copy /V " & WUFC_MASTER_AGENT_LOCATION &_
-		" \\" & strComputer & "\C$\windows\temp\" & strRemoteAgentName 
-	exitCode = sh.Run( strCmd, 0, true )
+	If ( gUsername <> "" ) Then
+		strUserArg = "/USER:" & gUsername
+	End If
+	
+	WScript.echo strCmdUse
+	
+	strCmdUse = "net use \\" & strComputer & "\ADMIN$\temp " & _
+		gPassword & _
+		" " & strUserArg
+	exitCode = sh.Run( strCmdUse, 1, True )
+	
+	WScript.echo "NET USE exit code: " & exitCode
+	
+	strCmdCopy = "cmd /c copy /V " & WUFC_MASTER_AGENT_LOCATION &_
+		" \\" & strComputer & "\ADMIN$\temp\" & strRemoteAgentName 
+	exitCode = sh.Run( strCmdCopy, 1, true )
+	
+	WScript.echo "Copy exit code: " & exitCode
 	
 	If ( exitCode <> 0 ) Then 
 		stdErr.writeLine( "Copy failed to: " & strComputer )
 		call sh.Run( "cmd /c echo " & strComputer & " >> dead.txt", 0, True )
 	End If
 	
+	strCmdUse = "net use \\" & strComputer & "\ADMIN$\temp " & _
+		" /DELETE"
+	exitCode = sh.Run( strCmdUse, 1, True )
+	
+	WScript.echo "Net Use Delete exit code: " & exitCode
+	
 	deployAgent = exitCode
 End Function
 
 '*******************************************************************************
-Function executeAgent(strComputer, booAttached, booRestart, strRemoteAgentName)
+Function executeAgent(strComputer, booAttached, booRestart, booSystem, strRemoteAgentName)
 
 	Dim exitCode
 	Dim strCmd
 	Dim strArgAttached
 	Dim strArgRestart
 	Dim strTempFileRedirect
+	DIm strSysArg
 
 	strTempFileRedirect = ""
 	strArgAttached = "-d"
@@ -343,24 +376,29 @@ Function executeAgent(strComputer, booAttached, booRestart, strRemoteAgentName)
 		strTempFileRedirect = " 2>&1>" & WUFC_PSEXEC_TEMP_FILE
 	End If
 	
+	If ( booSystem ) Then strSysArg = "-s" Else strSysArg = ""
+	
 	If ( booRestart )  Then strArgRestart = " /sR " Else strArgRestart = "" 
 
 	stdOut.writeLine( "Remote executing wuf agent on: " & strComputer )
 	
-	strCmd = "cmd /c psexec.exe -accepteula" & strArgAttached & " -s  \\" & strComputer & _
-		" -w C:\Windows\Temp c:\windows\system32\cscript.exe //B //NoLogo c:\windows\temp\" & _
+	strCmd = "cmd /k psexec.exe -accepteula" & strArgAttached & " " & strSysArg  & _
+		" \\" & strComputer & _
+		" -w C:\Windows\Temp c:\windows\system32\cscript.exe //I //NoLogo c:\windows\temp\" & _
 		strRemoteAgentName & " " & translateAction() & _
 		" /oN:" & gDropBoxLocation & "\" & strComputer & WUFC_DEFAULT_RESULT_POSTFIX & _
 		" /pS:" & gDropBoxLocation & _
-	    strArgRestart & strTempFileRedirect
+	    strArgRestart '& strTempFileRedirect
 		
-	'WScript.echo strCmd
-	exitCode = sh.Run ( strCmd, 0, booAttached )
+	WScript.echo strCmd
+	
 
 	If (booAttached) Then
-		Dim tempFile
-		Set tempFile = oFso.OpenTextFile(WUFC_PSEXEC_TEMP_FILE, 1 ,false, 0)
-		stdOut.WriteLine( tempFile.ReadAll )
+		exitCode = sh.Run ( strCmd, 1, booAttached )
+		'Dim tempFile
+		'Set tempFile = oFso.OpenTextFile(WUFC_PSEXEC_TEMP_FILE, 1 ,false, 0)
+		'stdOut.WriteLine( tempFile.ReadAll )
+		'tempFile.close
 		
 		If ( exitCode = 0 ) Then
 			stdOut.writeLine "Remote executed agent."
@@ -369,11 +407,27 @@ Function executeAgent(strComputer, booAttached, booRestart, strRemoteAgentName)
 			stdErr.writeLine("Unable to remote execute agent on:" & strComputer)
 		End If
 	Else
+		exitCode = sh.Run ( strCmd, 7, booAttached )
 		stdOut.writeLine "Psexec exit code: " & exitCode
 	End If
 	
 	'oFso.DeleteFile( WUFC_PSEXEC_TEMP_FILE )
 	
+End Function
+
+'*******************************************************************************
+Function deleteAgent(strComputer, strAgentName)
+
+	Dim strCmd
+	Dim exitCode
+	
+	strCmd = "psexec.exe -d -s \\" & strComputer & _
+		" cmd /c del c:\windows\temp\" & strAgentName
+		
+	WScript.echo strCmd
+		
+	exitCode = sh.Run ( strCmd, 0, true )
+	stdOut.writeLine "Agent delete exit code: " & exitCode
 End Function
 
 '*******************************************************************************
@@ -397,6 +451,8 @@ End Function
 
 '*******************************************************************************
 Function cleanup()
+	Set oFso = nothing
+	Set sh = nothing
 	' Cleanup anything that should be destroyed on exit
 End Function
 
