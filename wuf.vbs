@@ -298,7 +298,7 @@ Function mapAgent(arrComputers)
 			call createStub(strComputer, booDeployed)
 			If ( booDeployed ) Then
 				call executeAgent(strComputer, gBooAttached, gBooRestart, true, strRemoteAgentName)
-				'call deleteAgent(strComputer, strRemoteAgentName)
+				call deleteAgent(strComputer, strRemoteAgentName)
 			Else
 				stdErr.writeLine ( "Could not copy agent to remote host: " & strComputer )
 			End If
@@ -410,12 +410,12 @@ Function executeAgent(strComputer, booAttached, booRestart, booSystem, strRemote
 
 	strTempFileRedirect = ""
 	strArgAttached = "-d"
-	strArgCmdCloseArg = "/k"
+	strArgCmdCloseArg = "/c"
 	
-	If ( booAttached ) Then 
+	If ( booAttached ) Then
 		strArgAttached = ""
 		strTempFileRedirect = " 2>&1>" & WUFC_PSEXEC_TEMP_FILE
-		strArgCmdCloseArg = "/c"
+		strArgCmdCloseArg = "/k"
 	End If
 	
 	If ( booSystem ) Then strSysArg = "-s" Else strSysArg = ""
@@ -431,10 +431,9 @@ Function executeAgent(strComputer, booAttached, booRestart, booSystem, strRemote
 		" /oN:" & gDropBoxLocation & "\" & strComputer & WUFC_DEFAULT_RESULT_POSTFIX & _
 		" /pS:" & gDropBoxLocation & _
 	    strArgRestart '& strTempFileRedirect
-		
-	WScript.echo strCmd
-	
 
+	'WScript.echo strCmd
+	
 	If (booAttached) Then
 		exitCode = sh.Run ( strCmd, 1, booAttached )
 		'Dim tempFile
