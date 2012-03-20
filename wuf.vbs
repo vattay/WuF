@@ -272,9 +272,11 @@ End Function
 Function checkSystem()
 
 	Dim code
-	code = sh.Run("psexec.exe -s echo.", 0, true)
-	If ( code = 9009 ) 	Then abort("Psexec not available.")
-	'If ( code = 5 )		Then abort("Insufficient permissions, try running as admin.")
+	On Error Resume Next
+		code = sh.Run("psexec.exe -s echo.", 1, true)
+	If ( Err.number <> 0 ) Then abort( "Psexec could not run, errorcode = " & Err.number )
+	On Error GoTo 0
+
 End Function
 
 '*******************************************************************************
