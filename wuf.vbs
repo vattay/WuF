@@ -107,6 +107,7 @@ End Function
 Function config()
 
 	parseArgs()
+	autoConfig()
 	checkConfig()
 	checkSystem()
 	
@@ -193,11 +194,11 @@ Function parseArgs()
 			ElseIf ( strCompS(arg,"install") ) Then
 				booActionGiven = TRUE
 				gBooActionInstall = TRUE
-			ElseIf ( strCompS(arg,"i") ) Then
+			ElseIf ( strCompS(arg,"i") Or strCompS( arg, "interactive" ) ) Then
 				gBooInteractive = TRUE
-			ElseIf ( strCompS(arg,"r") ) Then
+			ElseIf ( strCompS( arg, "r" ) Or strCompS( arg, "restart" ) ) Then
 				gBooRestart = TRUE
-			ElseIf ( strCompS(arg,"a") ) Then
+			ElseIf ( strCompS(arg,"a") Or strCompS( arg, "attached" ) ) Then
 				gBooAttached = TRUE
 			ElseIf ( strCompS(arg,"h") Or strCompS(arg,"?") ) Then
 				printHelp()
@@ -220,6 +221,16 @@ Function parseArgs()
 	If ( NOT booActionGiven ) Then
 		abort( "No action argument, nothing to do." )
 	End If
+End Function
+
+'*******************************************************************************
+' Review configuration for logical problems
+Function autoConfig()
+
+	If ( ( gBooActionDownload) Or (gBooActionInstall) ) Then
+		gBooActionScan = TRUE
+	End If
+
 End Function
 
 '*******************************************************************************
@@ -274,7 +285,7 @@ Function checkSystem()
 	Dim code
 	On Error Resume Next
 		code = sh.Run("psexec.exe -s echo.", 1, true)
-	If ( Err.number <> 0 ) Then abort( "Psexec could not run, errorcode = " & Err.number )
+	If ( Err.number <> 0 ) Then abort( "Could not run psexec, errorcode = " & Err.number )
 	On Error GoTo 0
 
 End Function
