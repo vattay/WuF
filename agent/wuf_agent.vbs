@@ -83,8 +83,25 @@ Const WUF_LOCK_LOCATION = "c:\windows\temp\wuf.lck"
 
 Const WUF_DEFAULT_LOG_LOCATION = "." '@TODO change this to use . for default and add log location command line arg
 
-Const WUF_USAGE = "wuf_agent.vbs [/aA | /aS | /aD | /aI] [fI | fE] [/sN | /sR | /sH] [/sF] [/c:<criteria>] [/pS:<dir>] [/oN:<location_name>] [t:<shut_delay>]"
-Const WUF_USAGE2 = "/a* - action, /s* - shutdown action, /sF - force shutdown /c - update criteria, /pS - result pill, /oN - result location, /t - shutdown delay, /fI - include filter, /fE - exclude filter"
+Dim WUF_USAGE : WUF_USAGE = "wuf_agent.vbs [/aA | /aS | /aD | /aI] " & _
+	"[/sN | /sR | /sH] [/sF] [/t:<delay>] [/c:<criteria>] [/fI:<string> | /fE:<string>] " & _
+	"[/pS:<dir>] [/oN:<location_name>] " & _
+    VbCrLf & _
+	"  /aA - Automatic Action" & VbCrLf & _    
+	"  /aS - Scan Action" & VbCrLf & _
+	"  /aD - Download Action" & VbCrLf & _
+	"  /aI - Install Action" & VbCrLf & VbCrLf & _
+	"  /sN - No shutdown" & VbCrLf & _
+	"  /sR - Restart" & VbCrLf & _
+	"  /sH - Halt" & VbCrLf & _
+	"  /sF - Force shutdown action even if not needed" & VbCrLf & VbCrLf & _
+	"  /t:<delay> - shutdown delay" & VbCrLf & _
+	"  /c:<criteria> - WU API update criteria string" & VbCrLf & VbCrLf & _
+	"  /fI:<string> - Include updates with string" & VbCrLf & _
+	"  /fE:<string> - Exclude updates with string" & VbCrLf & _
+	"  /pS:<directory> - Create result summary file in directory" & VbCrLf & _
+	"  /oN:<file_path> - Write full results to a file at path"
+
 
 'Globals - avoid modification after initialize()
 Dim stdErr, stdOut	'std stream access
@@ -145,7 +162,6 @@ Function main()
 			ElseIf (Ex.number = WUF_INPUT_ERROR) Then
 				gResOut.recordError( "(Improper input) " & Ex.Description )
 				gResOut.recordInfo( WUF_USAGE )
-				gResOut.recordInfo( WUF_USAGE2 )
 			ElseIf  (Ex.number = WUF_INVALID_CONFIGURATION ) Then
 				gResOut.recordError( "(Invalid Configuration) " & Ex.Description )
 				gResOut.recordInfo( WUF_USAGE )
