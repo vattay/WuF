@@ -75,7 +75,7 @@ Const WUF_SHUTDOWN_DONT = 	0
 Const WUF_SHUTDOWN_RESTART = 1
 Const WUF_SHUTDOWN_SHUTDOWN = 2
 
-Const WUF_DEFAULT_SEARCH_CRITERIA = "IsAssigned=1 and IsHidden=0 and IsInstalled=0 and Type='Software'"
+Const WUF_DEFAULT_SEARCH_CRITERIA = "IsAssigned=1 and IsHidden=0 and IsInstalled=0 and Type='Software' and DeploymentAction='Installation'"
 Const WUF_DEFAULT_FORCE_SHUTDOWN_ACTION = FALSE
 Const WUF_DEFAULT_ACTION = 1 
 Const WUF_DEFAULT_SHUTDOWN_OPTION = 0
