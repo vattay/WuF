@@ -24,6 +24,8 @@ REM User Variables
 REM set dropBoxRootLocation="\\moore\public\wuf_dropbox"
 set dropBoxRootLocation=c:\temp\wuf_dropbox
 set dropResultPostfix=.result.txt
+REM dateformat: 1 = Fri 02/08/2008, 2 = 02.08.2008
+set dateformat=2
 
 REM ========================================================
 REM Constants
@@ -35,10 +37,19 @@ set usage2=	Action : ^( AUTO, SCAN, DOWNLOAD, INSTALL, DI ^)
 REM ========================================================
 REM Date and Time ------------------------------------------
 
+if [%dateformat%]==[1] (
 rem Parse the date (e.g., Fri 02/08/2008)
 set cur_yyyy=%date:~10,4%
 set cur_mm=%date:~4,2%
 set cur_dd=%date:~7,2%
+)
+
+if [%dateformat%]==[2] (
+rem Parse the date (e.g., 02.08.2008)
+set cur_yyyy=%date:~6,4%
+set cur_mm=%date:~3,2%
+set cur_dd=%date:~0,2%
+)
 
 rem Parse the time (e.g., 11:17:13.49)
 set cur_hh=%time:~0,2%
